@@ -1,0 +1,162 @@
+// prisma/schema.prisma
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ============================================
+// SITE — A government website being monitored
+// ============================================
+model Site {
+  id          String    @id @default(cuid())
+  name        String                          // "Absher"
+  nameAr      String?                         // "أبشر"
+  baseUrl     String                          // "https://www.absher.sa"
+  description String?                         // Brief description
+  schedule    Int       @default(10)          // Run interval in minutes (0 = manual only)
+  isPreset    Boolean   @default(false)       // Seed data site
+  isActive    Boolean   @default(true)        // Monitoring enabled
+  status      String    @default("unknown")   // unknown | healthy | degraded | down
+  lastRunAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  journeys    Journey[]
+  runs        Run[]
+  incidents   Incident[]
+}
+
+// ============================================
+// JOURNEY — A test scenario for a site
+// ============================================
+model Journey {
+  id          String   @id @default(cuid())
+  siteId      String
+  name        String                          // "Homepage Smoke Test"
+  type        String   @default("smoke")      // smoke | navigation | search | form | custom
+  stepsJson   String                          // JSON array of TestStep objects
+  isDefault   Boolean  @default(false)        // Auto-generated default journey
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  site        Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  runs        Run[]
+  incidents   Incident[]
+}
+
+// ============================================
+// RUN — A single execution of a journey
+// ============================================
+model Run {
+  id                  String    @id @default(cuid())
+  siteId              String
+  journeyId           String
+  status              String    @default("queued")    // queued | running | passed | failed | error | timeout
+  durationMs          Int?
+  totalSteps          Int       @default(0)
+  passedSteps         Int       @default(0)
+  failedSteps         Int       @default(0)
+  summaryJson         String?                         // AI-generated summary
+  errorJson           String?                         // Top-level error if run crashed
+  triggeredBy         String    @default("scheduler") // scheduler | manual | api
+  aiPageUnderstanding String?                         // JSON: AI's understanding of the page
+  aiTestPlan          String?                         // JSON: The test plan AI generated
+  aiSummary           String?                         // AI's final summary (detailed version)
+  startedAt           DateTime  @default(now())
+  finishedAt          DateTime?
+
+  site        Site      @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  journey     Journey   @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  steps       RunStep[]
+  artifacts   Artifact[]
+  elementResults ElementTestResult[]
+}
+
+// ============================================
+// RUN STEP — Individual step within a run
+// ============================================
+model RunStep {
+  id             String  @id @default(cuid())
+  runId          String
+  stepIndex      Int                          // 0-based order
+  action         String                       // navigate | click | type | assert_title | assert_element | screenshot | detect_search | detect_forms | discover_links
+  description    String                       // Human-readable: "Open homepage"
+  selector       String?                      // CSS selector if applicable
+  value          String?                      // Input value if applicable
+  url            String?                      // Target URL if applicable
+  status         String  @default("pending")  // pending | running | passed | failed | skipped
+  durationMs     Int?
+  screenshotPath String?
+  error          String?                      // Error message if failed
+  metadata       String?                      // JSON: extra data (found links, form fields, etc.)
+
+  run            Run     @relation(fields: [runId], references: [id], onDelete: Cascade)
+}
+
+// ============================================
+// ARTIFACT — Files generated during a run
+// ============================================
+model Artifact {
+  id        String @id @default(cuid())
+  runId     String
+  type      String                            // screenshot | trace | video | console | network | har
+  path      String                            // Relative path: artifacts/{siteId}/{runId}/trace.zip
+  sizeBytes Int?
+  createdAt DateTime @default(now())
+
+  run       Run    @relation(fields: [runId], references: [id], onDelete: Cascade)
+}
+
+// ============================================
+// ELEMENT TEST RESULT — Individual element test within a run
+// ============================================
+model ElementTestResult {
+  id              String   @id @default(cuid())
+  runId           String
+  elementType     String                            // button | link | dropdown | tab | modal-trigger | form-input | toggle | accordion | carousel-control | menu-item
+  elementText     String?                           // visible text (optional)
+  elementTextAr   String?                           // Arabic text if present
+  elementSelector String                            // CSS selector
+  parentSection   String?                           // header | nav | hero | footer | etc.
+  action          String                            // click | hover | type | select | toggle
+  status          String   @default("pending")      // pending | running | passed | failed | skipped | warning
+  responseTimeMs  Int?
+  urlBefore       String?
+  urlAfter        String?
+  urlChanged      Boolean  @default(false)
+  screenshotBefore String?
+  screenshotAfter  String?
+  consoleErrors   String?                           // JSON array
+  networkErrors   String?                           // JSON array
+  domChanges      String?                           // description of what changed
+  error           String?
+  cursorX         Int?                              // cursor position for visualization
+  cursorY         Int?
+  createdAt       DateTime @default(now())
+
+  run             Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+}
+
+// ============================================
+// INCIDENT — Grouped failures for a journey
+// ============================================
+model Incident {
+  id          String    @id @default(cuid())
+  siteId      String
+  journeyId   String?
+  title       String                          // "Homepage Smoke Test failing"
+  description String?                         // AI-generated incident description
+  status      String    @default("open")      // open | investigating | resolved
+  severity    String    @default("medium")    // low | medium | high | critical
+  occurrences Int       @default(1)           // Number of consecutive failures
+  firstSeenAt DateTime  @default(now())
+  lastSeenAt  DateTime  @default(now())
+  resolvedAt  DateTime?
+
+  site        Site      @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  journey     Journey?  @relation(fields: [journeyId], references: [id])
+}
