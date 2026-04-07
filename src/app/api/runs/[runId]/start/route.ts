@@ -4,7 +4,9 @@ import { prisma } from "@/lib/prisma";
 import { executeAITest } from "@/lib/ai-executor";
 import { executeAITestMCP } from "@/lib/ai-executor-mcp";
 import { processRunResult } from "@/lib/incidents";
-import { broadcast } from "@/lib/ws-server";
+import { broadcast, createRelayConnection } from "@/lib/ws-server";
+import { ensureWebSocketServer } from "@/lib/init-ws";
+import { WebSocket } from "ws";
 import path from "path";
 
 // Get AI execution mode from environment
@@ -17,29 +19,61 @@ export async function POST(
 ) {
   try {
     const runId = params.runId;
-    console.log(`[START] Looking for run ${runId} in pendingRuns (size: ${global.pendingRuns?.size || 0})`);
+    console.log(`[START] Looking for run ${runId}`);
 
-    // Get pending run data
-    const pendingData = global.pendingRuns?.get(runId);
-    if (!pendingData) {
-      console.log(`[START] Run ${runId} not found in pendingRuns`);
+    // First check if run exists in database
+    const run = await prisma.run.findUnique({
+      where: { id: runId },
+      include: { site: true, journey: true },
+    });
+
+    if (!run) {
+      console.log(`[START] Run ${runId} not found in database`);
       return NextResponse.json(
-        { error: "Run not found or already started" },
+        { error: "Run not found" },
         { status: 404 }
       );
     }
-    console.log(`[START] Found run ${runId}, starting execution`);
 
-    // Remove from pending map
-    global.pendingRuns.delete(runId);
+    // Check if run is already running or completed
+    if (run.status !== "queued") {
+      console.log(`[START] Run ${runId} already started (status: ${run.status})`);
+
+      // If it's still running, that's OK - client can still watch
+      if (run.status === "running") {
+        return NextResponse.json({
+          success: true,
+          alreadyRunning: true,
+          message: "Run is already in progress"
+        });
+      }
+
+      // If it's completed, redirect client to report
+      return NextResponse.json(
+        {
+          error: `Run already ${run.status}`,
+          redirect: `/report/${runId}`
+        },
+        { status: 400 }
+      );
+    }
+
+    console.log(`[START] Starting run ${runId} for site ${run.site.name}`);
+
+    // Check if this is a pending run (from Quick Test flow)
+    const pendingData = global.pendingRuns?.get(runId);
+    if (pendingData) {
+      // Remove from pending map
+      global.pendingRuns.delete(runId);
+    }
 
     // Start execution in background
     executeRun(
       runId,
-      pendingData.siteId,
-      pendingData.baseUrl,
-      pendingData.journeyId,
-      pendingData.stepsJson
+      run.siteId,
+      run.site.baseUrl,
+      run.journeyId,
+      run.journey?.stepsJson || "[]"
     ).catch((error) => {
       console.error(`Run ${runId} failed:`, error);
     });
@@ -60,22 +94,37 @@ async function executeRun(
   siteId: string,
   baseUrl: string,
   journeyId: string,
-  stepsJson: string // Not used anymore - AI generates its own test plan
+  stepsJson: string
 ) {
+  // ── Build a "send" helper that reaches the live browser viewer ──
+  // The WS server may live in the worker process (port 3003). We create a
+  // relay WebSocket to it so messages cross the process boundary.
+  // If the relay can't connect (worker not running), we fall back to direct
+  // broadcast (same-process WS server started via ensureWebSocketServer).
+  ensureWebSocketServer();
+  const relay: WebSocket = createRelayConnection(runId);
+  await new Promise<void>((resolve) => {
+    relay.on("open", resolve);
+    relay.on("error", () => resolve());
+    setTimeout(resolve, 2000);
+  });
+
+  const send = (msg: object) => {
+    const payload = JSON.stringify(msg);
+    if (relay.readyState === WebSocket.OPEN) {
+      relay.send(payload);
+    } else {
+      // Fallback: same-process direct broadcast
+      broadcast(runId, msg);
+    }
+  };
+
   try {
     console.log(`[AI EXECUTOR] Starting AI-powered test for run ${runId} (mode: ${AI_MODE})`);
 
-    // Get site info for better context
-    const site = await prisma.site.findUnique({ where: { id: siteId } });
-
-    // Set up artifacts directory
     const artifactsDir = path.join(process.cwd(), "artifacts", siteId, runId);
 
-    // Choose execution mode
     if (AI_MODE === "mcp") {
-      // ═══════════════════════════════════════════
-      // MCP MODE: Iterative AI-controlled testing
-      // ═══════════════════════════════════════════
       const result = await executeAITestMCP({
         url: baseUrl,
         runId,
@@ -84,16 +133,10 @@ async function executeRun(
         maxIterations: 50,
         onProgress: (event) => {
           console.log(`[AI MCP] Progress: ${event.phase} - ${event.description}`);
-
-          // Broadcast progress to live viewers
           if (event.type === "load") {
-            broadcast(runId, {
-              type: "run-status",
-              status: "running",
-              phase: event.description,
-            });
+            send({ type: "run-status", status: "running", phase: event.description });
           } else if (event.type === "testing") {
-            broadcast(runId, {
+            send({
               type: "step-update",
               step: {
                 index: event.currentStep || 0,
@@ -103,68 +146,41 @@ async function executeRun(
               },
             });
           } else if (event.type === "complete") {
-            broadcast(runId, {
-              type: "run-complete",
-              status: event.status === "completed" ? "passed" : "failed",
-              summary: result.summary,
-            });
+            send({ type: "run-complete", status: event.status === "completed" ? "passed" : "failed", summary: result.summary });
           }
         },
       });
 
       console.log(`[AI MCP] Test completed: ${result.status}, ${result.totalIterations} iterations`);
+      await prisma.site.update({ where: { id: siteId }, data: { lastRunAt: new Date() } });
 
-      // Update site lastRunAt
-      await prisma.site.update({
-        where: { id: siteId },
-        data: { lastRunAt: new Date() },
-      });
-
-      // Process incidents for MCP mode
       const failedSteps = result.steps.filter((s) => !s.toolResult?.success);
       if (failedSteps.length > 0) {
-        const mappedFailures = failedSteps.map((s) => ({
-          status: "failed" as const,
-          error: s.toolResult?.error || "Unknown error",
-        }));
-        await processRunResult(runId, siteId, journeyId, "failed", mappedFailures as any);
+        await processRunResult(runId, siteId, journeyId, "failed",
+          failedSteps.map((s) => ({ status: "failed" as const, error: s.toolResult?.error || "Unknown error" })) as any);
       } else {
         await processRunResult(runId, siteId, journeyId, "passed", [] as any);
       }
-
-      console.log(`[AI MCP] Run ${runId} completed successfully`);
       return;
     }
 
-    // ═══════════════════════════════════════════
-    // PLAN MODE: AI plans upfront, then executes
-    // ═══════════════════════════════════════════
+    // ── PLAN MODE ──
     const result = await executeAITest({
       url: baseUrl,
       runId,
       siteId,
       artifactsDir,
-      maxElements: 80,
-      timeoutPerElement: 5000,
+      maxElements: 20,
+      timeoutPerElement: 4000,
+      onBroadcast: send,  // ← browser frames + cursor events go through relay
       onProgress: (event) => {
-        // Broadcast progress to live viewers
         console.log(`[AI PLAN] Progress: ${event.phase} - ${event.description}`);
-
-        // Map executor events to WebSocket message format
         if (event.type === "load") {
-          broadcast(runId, {
-            type: "run-status",
-            status: "running",
-            phase: "Loading page...",
-          });
+          send({ type: "run-status", status: "running", phase: "Loading page..." });
         } else if (event.type === "analysis") {
-          broadcast(runId, {
-            type: "run-status",
-            status: "running",
-            phase: "AI analyzing page...",
-          });
+          send({ type: "run-status", status: "running", phase: "AI analyzing page..." });
         } else if (event.type === "testing") {
-          broadcast(runId, {
+          send({
             type: "step-update",
             step: {
               index: event.currentStep || 0,
@@ -176,65 +192,25 @@ async function executeRun(
             },
           });
         } else if (event.type === "summary") {
-          broadcast(runId, {
-            type: "run-status",
-            status: "running",
-            phase: "Generating AI summary...",
-          });
+          send({ type: "run-status", status: "running", phase: "Generating AI summary..." });
         } else if (event.type === "complete") {
-          broadcast(runId, {
-            type: "run-complete",
-            status: event.status === "completed" ? "passed" : "failed",
-            summary: event.data?.summary,
-          });
+          send({ type: "run-complete", status: event.status === "completed" ? "passed" : "failed", summary: event.data?.summary });
         }
       },
     });
 
-    console.log(`[AI EXECUTOR] Test completed with status: ${result.status}`);
+    console.log(`[AI EXECUTOR] Test completed with status: ${result.overallStatus}`);
 
-    // Update site lastRunAt
-    await prisma.site.update({
-      where: { id: siteId },
-      data: { lastRunAt: new Date() },
-    });
+    await prisma.site.update({ where: { id: siteId }, data: { lastRunAt: new Date() } });
 
-    // Process incidents based on element test results
-    const failedElements = result.elementResults.filter(
-      (e) => e.status === "failed" || e.status === "error"
-    );
-
+    const failedElements = result.results.filter((e) => e.status === "failed");
     if (failedElements.length > 0) {
-      // Map element results to incident-compatible format
-      const failedSteps = failedElements.map((e) => ({
-        status: e.status,
-        error: e.error,
-      }));
-
-      await processRunResult(
-        runId,
-        siteId,
-        journeyId,
-        "failed",
-        failedSteps as any
-      );
-    } else if (result.status === "error") {
-      await processRunResult(
-        runId,
-        siteId,
-        journeyId,
-        "error",
-        [{ status: "failed", error: result.error || "Unknown error" }] as any
-      );
+      await processRunResult(runId, siteId, journeyId, "failed",
+        failedElements.map((e) => ({ status: "failed" as const, error: e.actualBehavior })) as any);
+    } else if (result.overallStatus === "failed") {
+      await processRunResult(runId, siteId, journeyId, "failed", [{ status: "failed", error: "Test failed" }] as any);
     } else {
-      // All passed - resolve any open incidents
-      await processRunResult(
-        runId,
-        siteId,
-        journeyId,
-        "passed",
-        [] as any
-      );
+      await processRunResult(runId, siteId, journeyId, "passed", [] as any);
     }
 
     console.log(`[AI EXECUTOR] Run ${runId} completed successfully`);
@@ -248,12 +224,8 @@ async function executeRun(
         finishedAt: new Date(),
       },
     });
-
-    // Broadcast error to clients
-    broadcast(runId, {
-      type: "run-complete",
-      status: "error",
-      error: (error as Error).message,
-    });
+    send({ type: "run-complete", status: "error", error: (error as Error).message });
+  } finally {
+    relay.close();
   }
 }

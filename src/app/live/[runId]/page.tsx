@@ -22,7 +22,12 @@ export default function LiveViewPage() {
   const router = useRouter();
   const runId = params.runId as string;
 
-  const [frame, setFrame] = useState<string | null>(null);
+  // Canvas-based frame rendering — bypasses React state for every frame,
+  // giving smooth real-time updates without re-render overhead.
+  const [hasFrame, setHasFrame] = useState(false);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const imgBufferRef = useRef<HTMLImageElement | null>(null);
+
   const [steps, setSteps] = useState<StepStatus[]>([]);
   const [runStatus, setRunStatus] = useState<string>("connecting");
   const [elapsed, setElapsed] = useState(0);
@@ -35,31 +40,54 @@ export default function LiveViewPage() {
   });
   const wsRef = useRef<WebSocket | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const timerStartRef = useRef<number | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
-  const startedRef = useRef<boolean>(false); // Track if we've already started the run
+  const startedRef = useRef<boolean>(false);
+  const cleanupRef = useRef<boolean>(false);
+
+  const startTimer = () => {
+    if (timerStartRef.current !== null) return; // already running
+    timerStartRef.current = Date.now();
+    timerRef.current = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - timerStartRef.current!) / 1000));
+    }, 1000);
+  };
 
   useEffect(() => {
+    // Skip if already initialized (React Strict Mode double-mount protection)
+    if (wsRef.current && wsRef.current.readyState !== WebSocket.CLOSED) {
+      console.log("WebSocket already exists, reusing connection");
+      cleanupRef.current = false;
+      return () => {
+        cleanupRef.current = true;
+      };
+    }
+
+    cleanupRef.current = false;
     const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:3003";
     const ws = new WebSocket(`${wsUrl}/live/${runId}`);
     wsRef.current = ws;
 
-    // Start elapsed timer
-    const startTime = Date.now();
-    timerRef.current = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - startTime) / 1000));
-    }, 1000);
-
     ws.onopen = () => {
       console.log("WebSocket connected");
-      setRunStatus("running");
+      setRunStatus("connecting");
 
       // Only trigger execution once (not on reconnections)
       if (!startedRef.current) {
         startedRef.current = true;
         fetch(`/api/runs/${runId}/start`, { method: "POST" })
-          .then((res) => {
+          .then(async (res) => {
+            const data = await res.json();
             if (!res.ok) {
-              console.error("Failed to start run");
+              // Check if we should redirect to report (test already completed)
+              if (data.redirect) {
+                console.log("Test already completed, redirecting to report...");
+                router.push(data.redirect);
+                return;
+              }
+              console.error("Failed to start run:", data.error);
+            } else if (data.alreadyRunning) {
+              console.log("Test is already running, watching...");
             }
           })
           .catch((err) => {
@@ -73,7 +101,25 @@ export default function LiveViewPage() {
 
       switch (data.type) {
         case "browser-frame":
-          setFrame(data.image);
+          // Start timer on first real frame from the browser
+          startTimer();
+          // Draw directly to canvas — no React state update per frame,
+          // so all frames render smoothly at full ~16fps.
+          if (!imgBufferRef.current) imgBufferRef.current = new Image();
+          imgBufferRef.current.onload = () => {
+            const canvas = canvasRef.current;
+            if (!canvas) return;
+            const ctx = canvas.getContext("2d");
+            if (!ctx) return;
+            ctx.drawImage(imgBufferRef.current!, 0, 0, canvas.width, canvas.height);
+            // Trigger one React state update only for the first frame
+            // (to swap spinner → canvas visibility)
+            if (canvas.dataset.hasFrame !== "true") {
+              canvas.dataset.hasFrame = "true";
+              setHasFrame(true);
+            }
+          };
+          imgBufferRef.current.src = data.image;
           break;
 
         case "cursor_move":
@@ -114,12 +160,13 @@ export default function LiveViewPage() {
           break;
 
         case "run-status":
-          setRunStatus(data.status);
+          startTimer(); // also start timer when execution begins
+          setRunStatus(data.status || "running");
           break;
 
         case "run-complete":
           setRunStatus(data.status || "completed");
-          if (timerRef.current) clearInterval(timerRef.current);
+          if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
           // Auto-redirect to report after 2 seconds
           setTimeout(() => {
             router.push(`/report/${runId}`);
@@ -135,12 +182,22 @@ export default function LiveViewPage() {
 
     ws.onclose = () => {
       console.log("WebSocket closed");
-      if (timerRef.current) clearInterval(timerRef.current);
+      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     };
 
     return () => {
-      ws.close();
-      if (timerRef.current) clearInterval(timerRef.current);
+      // Only cleanup if this is a true unmount, not React Strict Mode
+      if (!cleanupRef.current) {
+        console.log("Skipping cleanup (React Strict Mode)");
+        cleanupRef.current = true;
+        return;
+      }
+
+      console.log("Cleaning up WebSocket connection");
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
+      }
+      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     };
   }, [runId, router]);
 
@@ -201,7 +258,7 @@ export default function LiveViewPage() {
               className="flex-1 relative rounded-xl overflow-hidden border-2 border-gray-200 bg-gray-950 shadow-xl"
             >
               {/* Live Badge */}
-              {runStatus === "running" && (
+              {hasFrame && (
                 <div className="absolute top-4 left-4 z-10 flex items-center gap-2 bg-gradient-to-r from-red-500 to-red-600 text-white px-4 py-2 rounded-full text-xs font-bold shadow-2xl">
                   <span className="w-2.5 h-2.5 bg-white rounded-full animate-pulse" />
                   LIVE
@@ -213,15 +270,17 @@ export default function LiveViewPage() {
                 ⏱️ {Math.floor(elapsed / 60)}:{(elapsed % 60).toString().padStart(2, "0")}
               </div>
 
-              {/* Browser Frame */}
-              {frame ? (
-                <img
-                  src={frame}
-                  alt="Live browser view"
-                  className="w-full h-full object-contain"
-                />
-              ) : (
-                <div className="flex flex-col items-center justify-center h-full text-gray-500 gap-3">
+              {/* Browser Frame — canvas renders each JPEG frame directly,
+                  bypassing React state for smooth real-time streaming. */}
+              <canvas
+                ref={canvasRef}
+                width={1280}
+                height={720}
+                className="w-full h-full object-contain"
+                style={{ display: hasFrame ? "block" : "none" }}
+              />
+              {!hasFrame && (
+                <div className="flex flex-col items-center justify-center h-full text-gray-500 gap-3 absolute inset-0">
                   <div className="w-8 h-8 border-2 border-gray-600 border-t-white rounded-full animate-spin" />
                   <p className="text-sm">Connecting to browser...</p>
                 </div>
