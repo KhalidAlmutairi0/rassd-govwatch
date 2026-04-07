@@ -46,3 +46,10 @@ next-env.d.ts
 /test-results/
 /playwright-report/
 /playwright/.cache/
+
+# logs and local files
+*.log
+*.png
+*.webm
+claude.js
+FIXES_APPLIED.md
