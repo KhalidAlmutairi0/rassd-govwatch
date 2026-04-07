@@ -19,9 +19,9 @@ export function initWebSocketServer(port: number = 3001) {
   wss = new WebSocketServer({ port });
 
   wss.on("connection", (ws, req) => {
-    // URL format: ws://localhost:3001/live/{runId}
     const url = new URL(req.url!, `http://localhost:${port}`);
     const pathParts = url.pathname.split("/");
+    const pathType = pathParts[1]; // "live" or "relay"
     const runId = pathParts[pathParts.length - 1];
 
     if (!runId) {
@@ -29,7 +29,28 @@ export function initWebSocketServer(port: number = 3001) {
       return;
     }
 
-    // Register client to session
+    // ── RELAY path: /relay/{runId} ──
+    // Used by the Next.js API process to push messages to viewer clients
+    if (pathType === "relay") {
+      console.log(`[WS] Relay client connected for run: ${runId}`);
+      ws.on("message", (data) => {
+        const session = sessions.get(runId);
+        const payload = data.toString();
+        const msgType = (() => { try { return JSON.parse(payload).type; } catch { return "?"; } })();
+        console.log(`[WS] Relay → ${session?.clients.size || 0} viewers for run ${runId} (type: ${msgType})`);
+        if (!session) return;
+        for (const client of (session.clients as Set<WebSocket>)) {
+          if (client.readyState === WebSocket.OPEN) {
+            client.send(payload);
+          }
+        }
+      });
+      ws.on("error", () => {});
+      return; // Don't add relay clients to viewer sessions
+    }
+
+    // ── LIVE path: /live/{runId} ──
+    // Used by browser clients watching a run
     let session = sessions.get(runId);
     if (!session) {
       session = { runId, clients: new Set() };
@@ -55,6 +76,24 @@ export function initWebSocketServer(port: number = 3001) {
 
   console.log(`✅ WebSocket server running on ws://localhost:${port}`);
   return wss;
+}
+
+// Create a persistent relay connection to the worker's WS server.
+// Use this from the Next.js API process to push messages to viewer clients.
+export function createRelayConnection(runId: string, port?: number): WebSocket {
+  const workerPort = port || parseInt(process.env.WORKER_PORT || "3003");
+  const relay = new WebSocket(`ws://localhost:${workerPort}/relay/${runId}`);
+  relay.on("error", (err) => {
+    console.error(`[RELAY] Connection error for run ${runId}:`, err.message);
+  });
+  return relay;
+}
+
+// Send one message through a relay connection (fire and forget)
+export function relaySend(relay: WebSocket, message: object) {
+  if (relay.readyState === WebSocket.OPEN) {
+    relay.send(JSON.stringify(message));
+  }
 }
 
 // Broadcast a message to all clients watching a specific run

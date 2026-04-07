@@ -14,7 +14,7 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.24.0",
+    "@anthropic-ai/sdk": "^0.24.3",
     "@playwright/mcp": "^0.0.68",
     "@prisma/client": "^5.14.0",
     "@radix-ui/react-dialog": "^1.0.5",

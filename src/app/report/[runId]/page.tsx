@@ -145,9 +145,18 @@ export default function ReportPage() {
     );
   }
 
-  let summary;
+  let summary: { executive?: string; executiveAr?: string; technicalDetails?: string; recommendations?: string[]; text?: string } | null = null;
   try {
-    summary = JSON.parse(run.summaryJson);
+    const parsed = JSON.parse(run.summaryJson);
+    // Normalize: executor may save { text } or { executive, executiveAr, ... }
+    summary = {
+      executive: parsed.executive || parsed.text || null,
+      executiveAr: parsed.executiveAr || null,
+      technicalDetails: parsed.technicalDetails || null,
+      recommendations: parsed.recommendations || null,
+    };
+    // Only show if there's at least something meaningful
+    if (!summary.executive && !summary.executiveAr) summary = null;
   } catch {
     summary = null;
   }

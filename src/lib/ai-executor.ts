@@ -13,9 +13,10 @@ interface ExecutorOptions {
   runId: string;
   siteId: string;
   artifactsDir: string;
-  maxElements?: number;        // Default 80
-  timeoutPerElement?: number;  // Default 5000ms
-  onProgress?: (event: ProgressEvent) => void;  // Callback for progress updates
+  maxElements?: number;
+  timeoutPerElement?: number;
+  onProgress?: (event: ProgressEvent) => void;
+  onBroadcast?: (msg: object) => void;  // Send WS messages to live viewers
 }
 
 export interface ProgressEvent {
@@ -26,7 +27,7 @@ export interface ProgressEvent {
   currentStep?: number;
   totalSteps?: number;
   elementType?: string;
-  elementSection?: string;
+  parentSection?: string;
   responseTimeMs?: number;
   data?: any;
 }
@@ -40,13 +41,21 @@ export interface ExecutorResult {
   overallStatus: "passed" | "failed" | "warning";
 }
 
+// Tiny jitter helper — makes cursor land slightly off-center like a human
+function jitter(n: number, range = 4): number {
+  return n + Math.round((Math.random() - 0.5) * range);
+}
+
 export async function executeAITest(options: ExecutorOptions): Promise<ExecutorResult> {
   const {
     url, runId, siteId, artifactsDir,
     maxElements = 80,
     timeoutPerElement = 5000,
-    onProgress
+    onProgress,
+    onBroadcast,
   } = options;
+
+  const send = (msg: object) => { if (onBroadcast) onBroadcast(msg); };
 
   const emit = (event: ProgressEvent) => {
     if (onProgress) onProgress(event);
@@ -96,9 +105,23 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
       });
     });
 
-    // Navigate to URL
-    await page.goto(url, { waitUntil: "networkidle", timeout: 30000 });
-    await page.waitForTimeout(2000); // Let page fully render
+    // ── Start CDP Screencast — streams live JPEG frames to the browser client ──
+    cdpSession = await page.context().newCDPSession(page);
+    await cdpSession.send("Page.startScreencast", {
+      format: "jpeg",
+      quality: 40,
+      maxWidth: 1280,
+      maxHeight: 720,
+      everyNthFrame: 2,
+    });
+    cdpSession.on("Page.screencastFrame", async ({ data, sessionId }: any) => {
+      send({ type: "browser-frame", image: `data:image/jpeg;base64,${data}` });
+      await cdpSession!.send("Page.screencastFrameAck", { sessionId }).catch(() => {});
+    });
+
+    // Navigate to URL — domcontentloaded is much faster than networkidle
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.waitForTimeout(500);
 
     emit({
       type: "load",
@@ -243,14 +266,14 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
         currentStep: stepNum,
         totalSteps: safeElements.length,
         elementType: testAction.type,
-        elementSection: testAction.section,
+        parentSection: testAction.section,
       });
 
       try {
         // Navigate back to original URL if we're on a different page
         if (page.url() !== url) {
-          await page.goto(url, { waitUntil: "networkidle", timeout: 15000 });
-          await page.waitForTimeout(1000);
+          await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15000 });
+          await page.waitForTimeout(300);
         }
 
         // Find the element
@@ -277,48 +300,40 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
           await prisma.elementTestResult.create({
             data: {
               runId,
-              elementName: testAction.element,
+              elementText: testAction.element,
               elementType: testAction.type,
               elementSelector: testAction.selector,
-              elementSection: testAction.section,
+              parentSection: testAction.section,
               action: testAction.action,
-              priority: testAction.priority,
-              reason: testAction.reason,
-              expectedBehavior: testAction.expectedBehavior,
               status: "warning",
               responseTimeMs: 0,
-              actualBehavior: result.actualBehavior,
-              aiAssessment: result.aiAssessment,
+              error: `Selector not found or element not interactable. ${result.actualBehavior || ''} ${result.aiAssessment || ''}`.trim(),
             },
           });
 
           continue;
         }
 
-        // Scroll into view
+        // Scroll into view smoothly
         await element.scrollIntoViewIfNeeded();
-        await page.waitForTimeout(300);
+        await page.waitForTimeout(80 + Math.round(Math.random() * 60));
 
         // Get bounding box for cursor position
         const box = await element.boundingBox();
-        const cursorX = box ? Math.round(box.x + box.width / 2) : 0;
-        const cursorY = box ? Math.round(box.y + box.height / 2) : 0;
+        const cursorX = box ? jitter(Math.round(box.x + box.width / 2)) : 0;
+        const cursorY = box ? jitter(Math.round(box.y + box.height / 2)) : 0;
 
-        // Emit cursor move event (for live view)
-        emit({
-          type: "testing",
-          phase: "cursor_move",
-          status: "running",
-          description: `Moving cursor to ${testAction.element}`,
-          data: {
-            x: cursorX,
-            y: cursorY,
-            elementText: testAction.element,
-            elementType: testAction.type,
-          },
+        // Human-like smooth mouse move to the element (with intermediate steps)
+        await page.mouse.move(cursorX, cursorY, { steps: 12 });
+
+        // Broadcast cursor position for animated cursor overlay
+        send({
+          type: "cursor_move",
+          data: { x: cursorX, y: cursorY, elementText: testAction.element, elementType: testAction.type },
         });
 
-        await page.waitForTimeout(600); // Wait for cursor animation
+        // Brief pause before acting — humans look before they click
+        await page.waitForTimeout(120 + Math.round(Math.random() * 80));
 
         // Screenshot BEFORE
         const beforeScreenshot = await page.screenshot();
@@ -329,37 +344,40 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
         const urlBefore = page.url();
         const consoleErrorsCount = consoleLogBuffer.filter(l => l.level === "error").length;
 
-        // Emit cursor click
-        emit({
-          type: "testing",
-          phase: "cursor_click",
-          status: "running",
-          description: `Clicking ${testAction.element}`,
-          data: { x: cursorX, y: cursorY },
-        });
+        // Broadcast click event
+        send({ type: "cursor_click", data: { x: cursorX, y: cursorY } });
 
-        // Perform the action
+        // Perform the action — human-like
         const startTime = Date.now();
 
         switch (testAction.action) {
           case "click":
-            await element.click({ timeout: timeoutPerElement });
+            await page.mouse.down();
+            await page.waitForTimeout(60 + Math.round(Math.random() * 40));
+            await page.mouse.up();
             break;
           case "hover":
             await element.hover({ timeout: timeoutPerElement });
+            await page.waitForTimeout(200);
             break;
-          case "type":
-            await element.fill("test", { timeout: timeoutPerElement });
-            break;
-          case "select":
+          case "type": {
             await element.click({ timeout: timeoutPerElement });
+            await page.waitForTimeout(150);
+            const searchTerm = testAction.element.toLowerCase().includes("search") ? "خدمات" : "test";
+            await page.keyboard.type(searchTerm, { delay: 80 + Math.round(Math.random() * 40) });
+            break;
+          }
+          case "select":
+            await page.mouse.down();
+            await page.waitForTimeout(60);
+            await page.mouse.up();
             break;
         }
 
         const responseTimeMs = Date.now() - startTime;
 
-        // Wait for any response/animation
-        await page.waitForTimeout(1500);
+        // Human-like pause after action — wait for the page to react
+        await page.waitForTimeout(350 + Math.round(Math.random() * 150));
 
         // Screenshot AFTER
         const afterScreenshot = await page.screenshot();
@@ -406,14 +424,11 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
         await prisma.elementTestResult.create({
           data: {
             runId,
-            elementName: testAction.element,
+            elementText: testAction.element,
             elementType: testAction.type,
             elementSelector: testAction.selector,
-            elementSection: testAction.section,
+            parentSection: testAction.section,
             action: testAction.action,
-            priority: testAction.priority,
-            reason: testAction.reason,
-            expectedBehavior: testAction.expectedBehavior,
             status: assessment.status,
             responseTimeMs,
             urlBefore,
@@ -423,8 +438,7 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
             screenshotAfter: afterPath,
             consoleErrors: JSON.stringify(newConsoleErrors),
             networkErrors: JSON.stringify([]),
-            actualBehavior: assessment.assessment,
-            aiAssessment: assessment.assessment,
+            domChanges: assessment.assessment,
             cursorX,
             cursorY,
           },
@@ -464,17 +478,15 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
         await prisma.elementTestResult.create({
           data: {
             runId,
-            elementName: testAction.element,
+            elementText: testAction.element,
             elementType: testAction.type,
             elementSelector: testAction.selector,
-            elementSection: testAction.section,
+            parentSection: testAction.section,
             action: testAction.action,
             status: "failed",
             responseTimeMs: timeoutPerElement,
-            error: error.message,
+            error: `${error.message}. ${failureResult.actualBehavior || ''} ${failureResult.aiAssessment || ''}`.trim(),
             consoleErrors: JSON.stringify([error.message]),
-            actualBehavior: failureResult.actualBehavior,
-            aiAssessment: failureResult.aiAssessment,
           },
         });
 
@@ -489,7 +501,7 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
       }
 
       // Rate limiting — wait between elements
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(100);
     }
 
     // ─────────────────────────────────────────
@@ -555,6 +567,7 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
     };
 
   } finally {
+    if (cdpSession) await cdpSession.send("Page.stopScreencast").catch(() => {});
     if (browser) await browser.close();
   }
 }

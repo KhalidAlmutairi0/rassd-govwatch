@@ -11,18 +11,14 @@ export function ensureWebSocketServer() {
     const port = parseInt(process.env.WORKER_PORT || "3003");
     initWebSocketServer(port);
     initialized = true;
+    console.log(`[WS] WebSocket server initialized on port ${port}`);
   } catch (error: any) {
-    // If port is already in use, it means WS server is already running
+    // Port already in use = WS server already running (e.g. worker process)
     if (error.code === "EADDRINUSE") {
-      console.log("WebSocket server already running");
+      console.log("[WS] WebSocket server already running on port");
       initialized = true;
     } else {
-      console.error("Failed to start WebSocket server:", error);
+      console.error("[WS] Failed to start WebSocket server:", error);
     }
   }
-}
-
-// Auto-initialize on import (server-side only)
-if (typeof window === "undefined") {
-  ensureWebSocketServer();
 }

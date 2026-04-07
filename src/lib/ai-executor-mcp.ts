@@ -53,6 +53,7 @@ export async function executeAITestMCP(options: MCPExecutorOptions): Promise<MCP
   let browser: Browser | null = null;
   let page: Page | null = null;
   let cdpSession: CDPSession | null = null;
+  let screencastRelay: import("ws").WebSocket | null = null;
 
   const startTime = Date.now();
 
@@ -86,7 +87,7 @@ export async function executeAITestMCP(options: MCPExecutorOptions): Promise<MCP
 
     // Start CDP Screencast for live view
     cdpSession = await page.context().newCDPSession(page);
-    await startScreencast(cdpSession, runId, emit);
+    screencastRelay = await startScreencast(cdpSession, runId, emit);
 
     // Navigate to initial URL
     await page.goto(url, { waitUntil: "networkidle", timeout: 30000 });
@@ -271,6 +272,9 @@ export async function executeAITestMCP(options: MCPExecutorOptions): Promise<MCP
     if (cdpSession) {
       await cdpSession.send("Page.stopScreencast").catch(() => {});
     }
+    if (screencastRelay) {
+      screencastRelay.close();
+    }
     if (browser) {
       await browser.close();
     }
@@ -285,7 +289,21 @@ async function startScreencast(
   cdp: CDPSession,
   runId: string,
   emit: (event: ProgressEvent) => void
-) {
+): Promise<import("ws").WebSocket | null> {
+  // Create a persistent relay connection to the worker's WS server.
+  // The Next.js API process and worker are separate processes, so we
+  // cannot use broadcast() directly — it would look at an empty sessions Map.
+  let relay: import("ws").WebSocket | null = null;
+  try {
+    const { createRelayConnection, relaySend } = await import("./ws-server");
+    relay = createRelayConnection(runId);
+    await new Promise<void>((resolve) => {
+      relay!.on("open", resolve);
+      relay!.on("error", () => resolve()); // proceed even if relay unavailable
+      setTimeout(resolve, 3000); // 3 s timeout
+    });
+  } catch {}
+
   await cdp.send("Page.startScreencast", {
     format: "jpeg",
     quality: 50,
@@ -295,15 +313,14 @@ async function startScreencast(
   });
 
   cdp.on("Page.screencastFrame", async ({ data, sessionId }) => {
-    // Broadcast frame via WebSocket (if ws-server is imported)
-    try {
-      const { broadcast } = await import("./ws-server");
-      broadcast(runId, {
+    if (relay && relay.readyState === 1 /* OPEN */) {
+      relay.send(JSON.stringify({
         type: "browser-frame",
         image: `data:image/jpeg;base64,${data}`,
-      });
-    } catch {}
-
+      }));
+    }
     await cdp.send("Page.screencastFrameAck", { sessionId });
   });
+
+  return relay;
 }

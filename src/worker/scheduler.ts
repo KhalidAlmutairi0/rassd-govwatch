@@ -75,7 +75,12 @@ async function runJourney(site: any, journey: any) {
       },
     });
 
-    console.log(`✅ ${site.name}: ${result.status} (${result.durationMs}ms, ${result.elementResults.length} elements tested)`);
+    // Normalize return shape: executor returns { results, overallStatus, totalDuration }
+    const elementResults = result.results ?? result.elementResults ?? [];
+    const status = result.overallStatus ?? result.status ?? "error";
+    const durationMs = result.totalDuration ?? result.durationMs ?? 0;
+
+    console.log(`✅ ${site.name}: ${status} (${durationMs}ms, ${elementResults.length} elements tested)`);
 
     // Update site last run time
     await prisma.site.update({
@@ -84,13 +89,13 @@ async function runJourney(site: any, journey: any) {
     });
 
     // Process incidents based on element test results
-    const failedElements = result.elementResults.filter(
-      (e) => e.status === "failed" || e.status === "error"
+    const failedElements = elementResults.filter(
+      (e: any) => e.status === "failed" || e.status === "error"
     );
 
     if (failedElements.length > 0) {
       // Map element results to incident-compatible format
-      const failedSteps = failedElements.map((e) => ({
+      const failedSteps = failedElements.map((e: any) => ({
         status: e.status,
         error: e.error,
       }));
@@ -102,13 +107,13 @@ async function runJourney(site: any, journey: any) {
         "failed",
         failedSteps as any
       );
-    } else if (result.status === "error") {
+    } else if (status === "error") {
       await processRunResult(
         run.id,
         site.id,
         journey.id,
         "error",
-        [{ status: "failed", error: result.error || "Unknown error" }] as any
+        [{ status: "failed", error: (result as any).error || "Unknown error" }] as any
       );
     } else {
       // All passed - resolve any open incidents
