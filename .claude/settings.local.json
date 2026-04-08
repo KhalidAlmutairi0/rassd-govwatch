@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx prisma:*)",
+      "Bash(node_modules/.bin/prisma --version)",
+      "Bash(npm install:*)",
+      "Bash(node -e \"const {chromium} = require\\('playwright'\\); chromium.launch\\({headless:true}\\).then\\(b=>{console.log\\('OK'\\); b.close\\(\\);}\\).catch\\(e=>console.error\\('FAIL:',e.message\\)\\);\")",
+      "Bash(npm run:*)",
+      "Read(//tmp/**)",
+      "Bash(powershell -Command \"Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force\")",
+      "Bash(npx tsx:*)",
+      "Bash(pkill -f \"scheduler.ts\")",
+      "Bash(tasklist)",
+      "Bash(jobs -l)",
+      "Bash(python:*)",
+      "Bash(powershell -Command \"Stop-Process -Id 20096 -Force -ErrorAction SilentlyContinue\")",
+      "WebFetch(domain:www.figma.com)",
+      "Bash(node -e \"const pkg = require\\('./package.json'\\); console.log\\('next:', pkg.dependencies.next\\); console.log\\('lucide:', pkg.dependencies['lucide-react']\\);\")",
+      "Bash(node -e \"const {createRequire} = require\\('module'\\); try { const r = createRequire\\(require.resolve\\('lucide-react/package.json'\\)\\); const pkg = require\\('./node_modules/lucide-react/package.json'\\); console.log\\('lucide version:', pkg.version\\); } catch\\(e\\) { console.log\\('error:', e.message\\); }\")",
+      "Bash(node -e \"const pkg = require\\('./node_modules/lucide-react/package.json'\\); const exp = pkg.exports; console.log\\(Object.keys\\(exp || {}\\).slice\\(0, 5\\)\\);\")",
+      "Bash(node:*)"
+    ]
+  }
+}
