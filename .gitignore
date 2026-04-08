@@ -49,6 +49,7 @@ next-env.d.ts
 
 # logs and local files
 *.log
-worker.log
+*.png
+*.webm
 claude.js
 FIXES_APPLIED.md

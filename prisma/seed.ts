@@ -44,13 +44,6 @@ const PRESET_SITES = [
 async function main() {
   console.log("🌱 Seeding database...");
 
-  // Clear existing preset sites to prevent duplicates on re-run
-  const existingPresets = await prisma.site.findMany({ where: { isPreset: true } });
-  if (existingPresets.length > 0) {
-    console.log(`  🗑️  Removing ${existingPresets.length} existing preset site(s)...`);
-    await prisma.site.deleteMany({ where: { isPreset: true } });
-  }
-
   for (const siteData of PRESET_SITES) {
     // Create site
     const site = await prisma.site.create({

@@ -3,14 +3,11 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { ClientLayout } from "@/components/layout/ClientLayout";
 
-const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-sans",
-});
+const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Rasd — AI Website Monitoring",
-  description: "AI-powered black-box monitoring for government websites",
+  title: "GovWatch - AI-Powered Government Website Monitoring",
+  description: "Real-time monitoring of Saudi government websites with AI-powered analysis",
 };
 
 export default function RootLayout({
@@ -19,8 +16,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" dir="ltr">
-      <body className={`${inter.variable} antialiased`} style={{ fontFamily: "var(--font-sans), system-ui, sans-serif" }}>
+    <html lang="en">
+      <body className={inter.className}>
         <ClientLayout>{children}</ClientLayout>
       </body>
     </html>

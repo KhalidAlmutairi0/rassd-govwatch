@@ -71,12 +71,12 @@ I'm showing you a screenshot of a government website, its HTML structure, and it
 
 **HTML Interactive Elements:**
 \`\`\`html
-${htmlStructure.slice(0, 3000)}${htmlStructure.length > 3000 ? '\n... (truncated)' : ''}
+${htmlStructure.slice(0, 6000)} ${htmlStructure.length > 6000 ? '... (truncated)' : ''}
 \`\`\`
 
 **Accessibility Tree (Semantic Page Structure):**
 \`\`\`
-${accessibilityTree ? accessibilityTree.slice(0, 2000) : 'Not available'}${accessibilityTree && accessibilityTree.length > 2000 ? '\n... (truncated)' : ''}
+${accessibilityTree ? accessibilityTree.slice(0, 4000) : 'Not available'}${accessibilityTree && accessibilityTree.length > 4000 ? '\n... (truncated)' : ''}
 \`\`\`
 
 The accessibility tree provides a structured, semantic representation of the page. Use it alongside the HTML to better understand:
@@ -151,11 +151,13 @@ IMPORTANT:
 - If you can't determine a reliable selector from the HTML, use the best approximation
 - Include elements from ALL sections: header, nav, hero, content, sidebar, footer`;
 
-  // Call AI with vision (screenshot + text) — catch both API errors and parse errors
+  // Call AI with vision (screenshot + text)
+  const plan = await callAIWithVision(prompt, screenshot);
+
   try {
-    const plan = await callAIWithVision(prompt, screenshot);
     const parsed = JSON.parse(plan);
 
+    // Validate and provide defaults
     if (!parsed.pageUnderstanding) {
       parsed.pageUnderstanding = {
         siteName: metadata.title,
@@ -172,11 +174,8 @@ IMPORTANT:
     }
 
     return parsed as AgentTestPlan;
-  } catch (error: any) {
-    const reason = error?.status === 429 ? "rate limit reached" :
-                   error?.code === "rate_limit_exceeded" ? "rate limit reached" :
-                   "AI call failed";
-    console.warn(`[AI] analyzePageAndCreatePlan: ${reason} — using heuristic fallback`);
+  } catch (error) {
+    console.error("Failed to parse AI response, using fallback:", error);
     return fallbackAnalysis(url, metadata, htmlStructure);
   }
 }
@@ -348,7 +347,7 @@ async function callAIWithVision(
     content.push({ type: "text", text: prompt });
 
     const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
+      model: "claude-sonnet-4-20250514",
       max_tokens: 4096,
       messages: [{ role: "user", content }],
     });
@@ -380,22 +379,6 @@ async function callAIWithVision(
     return extractJSON(response.choices[0].message.content || "");
   }
 
-  if (provider === "groq") {
-    // Groq doesn't support vision — use text-only prompt
-    const groq = new OpenAI({
-      apiKey: process.env.GROQ_API_KEY,
-      baseURL: "https://api.groq.com/openai/v1",
-    });
-
-    const response = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
-      max_tokens: 4096,
-      messages: [{ role: "user", content: prompt }],
-    });
-
-    return extractJSON(response.choices[0].message.content || "");
-  }
-
   // Fallback: no AI — return empty JSON for fallback handling
   return "{}";
 }
@@ -407,7 +390,7 @@ async function callAI(prompt: string): Promise<string> {
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
     const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
+      model: "claude-sonnet-4-20250514",
       max_tokens: 2048,
       messages: [{ role: "user", content: prompt }],
     });
@@ -427,28 +410,12 @@ async function callAI(prompt: string): Promise<string> {
     return response.choices[0].message.content || "";
   }
 
-  if (provider === "groq") {
-    const groq = new OpenAI({
-      apiKey: process.env.GROQ_API_KEY,
-      baseURL: "https://api.groq.com/openai/v1",
-    });
-
-    const response = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
-      max_tokens: 2048,
-      messages: [{ role: "user", content: prompt }],
-    });
-
-    return response.choices[0].message.content || "";
-  }
-
   return "";
 }
 
-function detectProvider(): "claude" | "openai" | "groq" | "none" {
+function detectProvider(): "claude" | "openai" | "none" {
   if (process.env.ANTHROPIC_API_KEY) return "claude";
   if (process.env.OPENAI_API_KEY) return "openai";
-  if (process.env.GROQ_API_KEY) return "groq";
   return "none";
 }
 

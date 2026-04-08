@@ -2,21 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { AnimatedCursor } from "@/components/live/AnimatedCursor";
-import {
-  Globe,
-  Camera,
-  Zap,
-  ShieldCheck,
-  Sparkles,
-  CheckCircle2,
-  Circle,
-  AlertTriangle,
-  Monitor,
-  Clock,
-  Navigation,
-  Search,
-} from "lucide-react";
+import Link from "next/link";
 
 interface StepStatus {
   index: number;
@@ -27,88 +17,36 @@ interface StepStatus {
   error?: string;
 }
 
-interface ActivityEntry {
-  message: string;
-  timestamp: string;
-  type: "info" | "warn" | "success" | "error";
-  icon: string;
-}
-
-function getStepIcon(action: string): string {
-  const map: Record<string, string> = {
-    navigate: "→",
-    screenshot: "📷",
-    click: "→",
-    type: "✎",
-    assert_element: "✓",
-    assert_title: "✓",
-    detect_search: "🔍",
-    detect_forms: "☷",
-  };
-  return map[action] || "→";
-}
-
-function stepToActivity(step: StepStatus): ActivityEntry {
-  const iconMap: Record<string, string> = {
-    navigate: "→",
-    screenshot: "cam",
-    click: "→",
-    type: "✎",
-    assert_element: "✓",
-    assert_title: "✓",
-    detect_search: "search",
-    detect_forms: "warn",
-  };
-  const typeMap: Record<string, "info" | "warn" | "success" | "error"> = {
-    passed: "info",
-    failed: "error",
-    running: "info",
-    pending: "info",
-    skipped: "warn",
-  };
-  return {
-    message: step.description || step.action,
-    timestamp: step.durationMs
-      ? new Date(Date.now() - step.durationMs).toLocaleTimeString()
-      : new Date().toLocaleTimeString(),
-    type: typeMap[step.status] ?? "info",
-    icon: iconMap[step.action] ?? "→",
-  };
-}
-
-const PHASES = [
-  { key: "crawling", label: "Crawling", icon: Globe },
-  { key: "ux", label: "UX Analysis", icon: Zap },
-  { key: "qa", label: "QA Check", icon: ShieldCheck },
-  { key: "ai", label: "AI Insights", icon: Sparkles },
-];
-
 export default function LiveViewPage() {
   const params = useParams();
   const router = useRouter();
   const runId = params.runId as string;
 
+  // Canvas-based frame rendering — bypasses React state for every frame,
+  // giving smooth real-time updates without re-render overhead.
+  const [hasFrame, setHasFrame] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgBufferRef = useRef<HTMLImageElement | null>(null);
-  const [hasFrame, setHasFrame] = useState(false);
-  const [latestFrame, setLatestFrame] = useState<string | null>(null);
+
   const [steps, setSteps] = useState<StepStatus[]>([]);
   const [runStatus, setRunStatus] = useState<string>("connecting");
   const [elapsed, setElapsed] = useState(0);
-  const [currentUrl, setCurrentUrl] = useState<string>("");
-  const [cursorState, setCursorState] = useState({ x: 0, y: 0, clicking: false, text: "", type: "" });
-
+  const [cursorState, setCursorState] = useState({
+    x: 0,
+    y: 0,
+    clicking: false,
+    text: '',
+    type: ''
+  });
   const wsRef = useRef<WebSocket | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const timerStartRef = useRef<number | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const startedRef = useRef<boolean>(false);
   const cleanupRef = useRef<boolean>(false);
-  const runStatusRef = useRef<string>("connecting");
-  const retryCountRef = useRef<number>(0);
 
   const startTimer = () => {
-    if (timerStartRef.current !== null) return;
+    if (timerStartRef.current !== null) return; // already running
     timerStartRef.current = Date.now();
     timerRef.current = setInterval(() => {
       setElapsed(Math.floor((Date.now() - timerStartRef.current!) / 1000));
@@ -116,34 +54,57 @@ export default function LiveViewPage() {
   };
 
   useEffect(() => {
+    // Skip if already initialized (React Strict Mode double-mount protection)
     if (wsRef.current && wsRef.current.readyState !== WebSocket.CLOSED) {
+      console.log("WebSocket already exists, reusing connection");
       cleanupRef.current = false;
-      return () => { cleanupRef.current = true; };
+      return () => {
+        cleanupRef.current = true;
+      };
     }
+
     cleanupRef.current = false;
     const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:3003";
     const ws = new WebSocket(`${wsUrl}/live/${runId}`);
     wsRef.current = ws;
 
     ws.onopen = () => {
+      console.log("WebSocket connected");
       setRunStatus("connecting");
+
+      // Only trigger execution once (not on reconnections)
       if (!startedRef.current) {
         startedRef.current = true;
         fetch(`/api/runs/${runId}/start`, { method: "POST" })
           .then(async (res) => {
             const data = await res.json();
-            if (!res.ok && data.redirect) router.push(data.redirect);
+            if (!res.ok) {
+              // Check if we should redirect to report (test already completed)
+              if (data.redirect) {
+                console.log("Test already completed, redirecting to report...");
+                router.push(data.redirect);
+                return;
+              }
+              console.error("Failed to start run:", data.error);
+            } else if (data.alreadyRunning) {
+              console.log("Test is already running, watching...");
+            }
           })
-          .catch(console.error);
+          .catch((err) => {
+            console.error("Error starting run:", err);
+          });
       }
     };
 
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
+
       switch (data.type) {
         case "browser-frame":
+          // Start timer on first real frame from the browser
           startTimer();
-          setLatestFrame(data.image);
+          // Draw directly to canvas — no React state update per frame,
+          // so all frames render smoothly at full ~16fps.
           if (!imgBufferRef.current) imgBufferRef.current = new Image();
           imgBufferRef.current.onload = () => {
             const canvas = canvasRef.current;
@@ -151,6 +112,8 @@ export default function LiveViewPage() {
             const ctx = canvas.getContext("2d");
             if (!ctx) return;
             ctx.drawImage(imgBufferRef.current!, 0, 0, canvas.width, canvas.height);
+            // Trigger one React state update only for the first frame
+            // (to swap spinner → canvas visibility)
             if (canvas.dataset.hasFrame !== "true") {
               canvas.dataset.hasFrame = "true";
               setHasFrame(true);
@@ -158,265 +121,252 @@ export default function LiveViewPage() {
           };
           imgBufferRef.current.src = data.image;
           break;
+
         case "cursor_move":
+          // Scale coordinates to match the displayed browser frame size
           if (frameRef.current) {
             const rect = frameRef.current.getBoundingClientRect();
+            const scaleX = rect.width / 1280;  // assuming 1280 viewport
+            const scaleY = rect.height / 720;
             setCursorState({
-              x: data.data.x * (rect.width / 1280),
-              y: data.data.y * (rect.height / 720),
+              x: data.data.x * scaleX,
+              y: data.data.y * scaleY,
               clicking: false,
               text: data.data.elementText,
-              type: data.data.elementType,
+              type: data.data.elementType
             });
           }
           break;
+
         case "cursor_click":
-          setCursorState((prev) => ({ ...prev, clicking: true }));
-          setTimeout(() => setCursorState((prev) => ({ ...prev, clicking: false })), 300);
+          setCursorState(prev => ({ ...prev, clicking: true }));
+          setTimeout(() => setCursorState(prev => ({ ...prev, clicking: false })), 300);
           break;
+
         case "step-update":
           setSteps((prev) => {
             const updated = [...prev];
             while (updated.length <= data.step.index) {
-              updated.push({ index: updated.length, action: "", description: "", status: "pending" });
+              updated.push({
+                index: updated.length,
+                action: "",
+                description: "",
+                status: "pending",
+              });
             }
             updated[data.step.index] = data.step;
-            if (data.step.url) setCurrentUrl(data.step.url);
             return updated;
           });
           break;
+
         case "run-status":
-          startTimer();
-          runStatusRef.current = data.status || "running";
+          startTimer(); // also start timer when execution begins
           setRunStatus(data.status || "running");
           break;
+
         case "run-complete":
-          runStatusRef.current = data.status || "completed";
           setRunStatus(data.status || "completed");
           if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-          setTimeout(() => router.push(`/report/${runId}`), 2000);
+          // Auto-redirect to report after 2 seconds
+          setTimeout(() => {
+            router.push(`/report/${runId}`);
+          }, 2000);
           break;
       }
     };
 
-    ws.onerror = () => console.error("WebSocket error");
-    ws.onclose = (event) => {
+    ws.onerror = () => {
+      console.error("WebSocket error");
+      setRunStatus("error");
+    };
+
+    ws.onclose = () => {
+      console.log("WebSocket closed");
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-      const terminal = ["passed", "failed", "completed", "error"];
-      if (!cleanupRef.current && !terminal.includes(runStatusRef.current) && retryCountRef.current < 5) {
-        retryCountRef.current += 1;
-        setRunStatus("connecting");
-        setTimeout(() => { if (!cleanupRef.current) window.location.reload(); }, retryCountRef.current * 1000);
-      }
     };
 
     return () => {
-      if (!cleanupRef.current) { cleanupRef.current = true; return; }
-      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close();
+      // Only cleanup if this is a true unmount, not React Strict Mode
+      if (!cleanupRef.current) {
+        console.log("Skipping cleanup (React Strict Mode)");
+        cleanupRef.current = true;
+        return;
+      }
+
+      console.log("Cleaning up WebSocket connection");
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
+      }
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     };
   }, [runId, router]);
 
-  const completedSteps = steps.filter((s) => ["passed", "failed", "skipped"].includes(s.status)).length;
+  const completedSteps = steps.filter(
+    (s) => s.status === "passed" || s.status === "failed" || s.status === "skipped"
+  ).length;
   const totalSteps = steps.length || 1;
-  const progressPercent = Math.min(Math.round((completedSteps / totalSteps) * 100), 100);
-  const isComplete = ["passed", "failed", "completed", "error"].includes(runStatus);
+  const progressPercent = Math.round((completedSteps / totalSteps) * 100);
 
-  // Determine active phase based on progress
-  const phaseIndex = Math.min(Math.floor(progressPercent / 25), 3);
+  const statusIcon = (status: string) => {
+    switch (status) {
+      case "passed": return "✅";
+      case "failed": return "❌";
+      case "running": return "⏳";
+      case "skipped": return "⏭️";
+      default: return "🔲";
+    }
+  };
 
-  // Activity log from steps
-  const activityItems = steps
-    .filter((s) => s.status !== "pending")
-    .map((s) => stepToActivity(s));
-
-  const formatElapsed = () => {
-    const mins = Math.floor(elapsed / 60);
-    const secs = (elapsed % 60).toString().padStart(2, "0");
-    return mins > 0 ? `${mins}:${secs}` : `0:${secs}`;
+  const getStatusClass = (status: string) => {
+    switch (status) {
+      case "running": return "bg-blue-50 border border-blue-200 shadow-sm";
+      case "passed": return "bg-green-50/50";
+      case "failed": return "bg-red-50/50";
+      case "pending": return "opacity-50";
+      default: return "";
+    }
   };
 
   return (
-    <div className="flex flex-col min-h-full p-5 gap-4">
-      {/* Header row */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-white">
-            {isComplete ? "Scan Complete" : "Scanning..."}
-          </h1>
-          {currentUrl && (
-            <p className="text-xs text-[hsl(var(--muted-foreground))] mt-0.5 truncate max-w-sm">
-              {currentUrl}
-            </p>
-          )}
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
+      {/* Header */}
+      <nav className="bg-white border-b shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
+          <Link href="/dashboard">
+            <Button variant="ghost" className="hover:bg-gray-100">
+              ← Back to Dashboard
+            </Button>
+          </Link>
+          <Badge className={
+            runStatus === "running" ? "bg-gradient-to-r from-blue-500 to-violet-500" :
+            runStatus === "passed" ? "bg-green-500" :
+            runStatus === "failed" ? "bg-red-500" : "bg-gray-500"
+          }>
+            {runStatus.toUpperCase()}
+          </Badge>
         </div>
-        <div className="text-2xl font-bold text-white tabular-nums">
-          {progressPercent}%
-        </div>
-      </div>
+      </nav>
 
-      {/* Progress bar */}
-      <div>
-        <div className="h-1.5 bg-[hsl(var(--border))] rounded-full overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-all duration-700 ${
-              isComplete && runStatus !== "failed" ? "bg-emerald-500" :
-              runStatus === "failed" ? "bg-red-500" : "bg-emerald-500"
-            }`}
-            style={{ width: `${progressPercent}%` }}
-          />
-        </div>
-        {isComplete && (
-          <div className="flex items-center gap-1.5 mt-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-            <span className="text-sm text-emerald-400 font-medium">Scan complete!</span>
-          </div>
-        )}
-      </div>
-
-      {/* Phase pills */}
-      <div className="flex items-center gap-2">
-        {PHASES.map((phase, i) => {
-          const done = i < phaseIndex || isComplete;
-          const active = i === phaseIndex && !isComplete;
-          return (
+      {/* Main Content */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="space-y-4">
+          {/* Browser + Steps Layout */}
+          <div className="flex gap-4 h-[520px]">
+            {/* LEFT: Browser Live View */}
             <div
-              key={phase.key}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                active
-                  ? "bg-emerald-900/50 border-emerald-700 text-emerald-400"
-                  : done
-                  ? "bg-[hsl(var(--card))] border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))]"
-                  : "bg-[hsl(var(--card))] border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))] opacity-40"
-              }`}
+              ref={frameRef}
+              className="flex-1 relative rounded-xl overflow-hidden border-2 border-gray-200 bg-gray-950 shadow-xl"
             >
-              <phase.icon className="w-3 h-3" />
-              {phase.label}
-              {done && <CheckCircle2 className="w-3 h-3 text-emerald-500" />}
-            </div>
-          );
-        })}
-      </div>
+              {/* Live Badge */}
+              {hasFrame && (
+                <div className="absolute top-4 left-4 z-10 flex items-center gap-2 bg-gradient-to-r from-red-500 to-red-600 text-white px-4 py-2 rounded-full text-xs font-bold shadow-2xl">
+                  <span className="w-2.5 h-2.5 bg-white rounded-full animate-pulse" />
+                  LIVE
+                </div>
+              )}
 
-      {/* Main content: Agent Activity + Latest Screenshot */}
-      <div className="flex gap-4 flex-1 min-h-0" style={{ minHeight: "520px" }}>
-
-        {/* Left: Agent Activity */}
-        <div className="w-72 shrink-0 bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-xl flex flex-col overflow-hidden">
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-[hsl(var(--border))]">
-            <Clock className="w-4 h-4 text-[hsl(var(--muted-foreground))]" />
-            <span className="text-sm font-medium text-white">Agent Activity</span>
-          </div>
-          <div className="flex-1 overflow-y-auto p-2">
-            {activityItems.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full text-[hsl(var(--muted-foreground))]">
-                <div className="w-6 h-6 border-2 border-current border-t-transparent rounded-full animate-spin mb-2" />
-                <p className="text-xs">Initializing agent...</p>
+              {/* Elapsed Time */}
+              <div className="absolute top-4 right-4 z-10 bg-black/70 backdrop-blur-sm text-white px-4 py-2 rounded-full text-xs font-mono font-semibold shadow-lg">
+                ⏱️ {Math.floor(elapsed / 60)}:{(elapsed % 60).toString().padStart(2, "0")}
               </div>
-            ) : (
-              <ul className="space-y-0.5">
-                {activityItems.map((item, i) => (
-                  <li
-                    key={i}
-                    className="flex items-start gap-3 px-3 py-2 rounded-lg hover:bg-white/5 transition-colors"
-                  >
-                    <span className={`mt-0.5 shrink-0 ${
-                      item.type === "error" ? "text-red-400" :
-                      item.type === "warn" ? "text-yellow-400" :
-                      item.type === "success" ? "text-emerald-400" :
-                      "text-blue-400"
-                    }`}>
-                      {item.type === "error" ? (
-                        <AlertTriangle className="w-3.5 h-3.5" />
-                      ) : item.type === "success" ? (
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                      ) : (
-                        <Circle className="w-3.5 h-3.5 fill-current" />
-                      )}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm text-white truncate">{item.message}</p>
-                    </div>
-                    <span className="text-xs text-[hsl(var(--muted-foreground))] shrink-0 tabular-nums">
-                      {item.timestamp}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </div>
 
-        {/* Right: Latest Screenshot — flex-1 so it fills remaining space */}
-        <div className="flex-1 bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-xl flex flex-col overflow-hidden">
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-[hsl(var(--border))]">
-            <Monitor className="w-4 h-4 text-[hsl(var(--muted-foreground))]" />
-            <span className="text-sm font-medium text-white">Latest Screenshot</span>
-          </div>
-
-          {/* Browser canvas — always mounted so canvasRef is valid on first frame */}
-          <div ref={frameRef} className="flex-1 relative bg-[hsl(var(--background))] overflow-hidden" style={{ minHeight: 200 }}>
-            {/* Placeholder shown until first frame arrives */}
-            {!hasFrame && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-[hsl(var(--muted-foreground))] z-10">
-                <Monitor className="w-10 h-10 opacity-30" />
-                <p className="text-xs">Live screenshot preview</p>
-              </div>
-            )}
-
-            {/* Canvas always in DOM so ref is always available */}
-            <canvas
-              ref={canvasRef}
-              width={1280}
-              height={720}
-              className="w-full h-full object-cover"
-              style={{ display: hasFrame ? "block" : "none" }}
-            />
-
-            {/* Overlays on top of canvas */}
-            {hasFrame && cursorState.text && runStatus === "running" && (
-              <AnimatedCursor
-                targetX={cursorState.x}
-                targetY={cursorState.y}
-                isClicking={cursorState.clicking}
-                elementText={cursorState.text}
-                elementType={cursorState.type}
+              {/* Browser Frame — canvas renders each JPEG frame directly,
+                  bypassing React state for smooth real-time streaming. */}
+              <canvas
+                ref={canvasRef}
+                width={1280}
+                height={720}
+                className="w-full h-full object-contain"
+                style={{ display: hasFrame ? "block" : "none" }}
               />
-            )}
-            {hasFrame && runStatus === "running" && (
-              <div className="absolute top-2 left-2 flex items-center gap-1.5 bg-black/70 backdrop-blur-sm rounded-full px-2 py-1 z-10">
-                <span className="w-1.5 h-1.5 bg-red-500 rounded-full live-dot" />
-                <span className="text-[10px] text-white font-medium">LIVE</span>
+              {!hasFrame && (
+                <div className="flex flex-col items-center justify-center h-full text-gray-500 gap-3 absolute inset-0">
+                  <div className="w-8 h-8 border-2 border-gray-600 border-t-white rounded-full animate-spin" />
+                  <p className="text-sm">Connecting to browser...</p>
+                </div>
+              )}
+
+              {/* Animated Cursor Overlay */}
+              {cursorState.text && runStatus === "running" && (
+                <AnimatedCursor
+                  targetX={cursorState.x}
+                  targetY={cursorState.y}
+                  isClicking={cursorState.clicking}
+                  elementText={cursorState.text}
+                  elementType={cursorState.type}
+                />
+              )}
+            </div>
+
+            {/* RIGHT: Steps Panel */}
+            <div className="w-80 border-2 border-gray-200 rounded-xl flex flex-col bg-white shadow-xl">
+              <div className="p-4 border-b bg-gradient-to-r from-gray-50 to-white">
+                <h3 className="font-bold text-sm text-gray-900">Test Steps</h3>
+                <p className="text-xs text-gray-600 mt-1 font-medium">
+                  {completedSteps}/{totalSteps} completed
+                </p>
               </div>
-            )}
+
+              <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
+                {steps.map((step, i) => (
+                  <div
+                    key={i}
+                    className={`flex items-start gap-2.5 p-2.5 rounded-lg text-sm transition-all ${getStatusClass(step.status)}`}
+                  >
+                    <span className="text-base mt-0.5 shrink-0">
+                      {statusIcon(step.status)}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="font-medium text-gray-800 truncate">
+                        {step.description || step.action}
+                      </p>
+                      {step.durationMs && (
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {(step.durationMs / 1000).toFixed(1)}s
+                        </p>
+                      )}
+                      {step.error && (
+                        <p className="text-xs text-red-600 mt-1 line-clamp-2">
+                          {step.error}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
 
-          {/* URL below screenshot */}
-          {currentUrl && (
-            <div className="px-3 py-2 border-t border-[hsl(var(--border))]">
-              <p className="text-xs font-medium text-white truncate">
-                {new URL(currentUrl).pathname || "Homepage"}
-              </p>
-              <p className="text-xs text-[hsl(var(--muted-foreground))] truncate">{currentUrl}</p>
+          {/* Progress Bar */}
+          <Card className="p-5 shadow-lg border-2 border-gray-200">
+            <div className="flex justify-between text-sm font-semibold text-gray-700 mb-2">
+              <span className="flex items-center gap-2">
+                Step {completedSteps}/{totalSteps}
+                {runStatus === "running" && (
+                  <span className="text-blue-600 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 bg-blue-600 rounded-full animate-pulse" />
+                    Running...
+                  </span>
+                )}
+                {runStatus === "passed" && " — ✅ All tests passed"}
+                {runStatus === "failed" && " — ❌ Some tests failed"}
+              </span>
+              <span className="text-gray-900 font-bold">{progressPercent}%</span>
             </div>
-          )}
+            <div className="h-3 bg-gray-100 rounded-full overflow-hidden shadow-inner">
+              <div
+                className={`h-full transition-all duration-700 ease-out rounded-full shadow-sm ${
+                  runStatus === "passed"
+                    ? "bg-gradient-to-r from-green-400 to-green-500"
+                    : runStatus === "failed"
+                    ? "bg-gradient-to-r from-green-500 via-yellow-500 to-red-500"
+                    : "bg-gradient-to-r from-blue-500 via-violet-500 to-purple-500"
+                }`}
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
+          </Card>
         </div>
-      </div>
-
-      {/* Footer */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1.5 text-sm text-[hsl(var(--muted-foreground))]">
-          <Clock className="w-4 h-4" />
-          Estimated time remaining: ~{Math.max(0, 2 - Math.floor(elapsed / 30))} min
-        </div>
-        {isComplete && (
-          <button
-            onClick={() => router.push(`/report/${runId}`)}
-            className="px-4 py-2 text-sm font-medium rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white transition-colors"
-          >
-            View Results
-          </button>
-        )}
       </div>
     </div>
   );

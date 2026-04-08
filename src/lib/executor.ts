@@ -224,7 +224,7 @@ export class PlaywrightExecutor {
             throw new Error(`Navigation blocked: ${step.url} is outside target domain`);
           }
           await this.page!.goto(step.url || config.baseUrl, {
-            timeout: 10000,
+            timeout: 30000,
             waitUntil: "domcontentloaded",
           });
           break;
@@ -232,7 +232,7 @@ export class PlaywrightExecutor {
 
         case "click": {
           if (!step.selector) throw new Error("Click step requires a selector");
-          await this.page!.waitForSelector(step.selector, { timeout: 5000 });
+          await this.page!.waitForSelector(step.selector, { timeout: 10000 });
           // SAFETY: Verify the link is same-domain before clicking
           const href = await this.page!.$eval(step.selector, (el) =>
             el instanceof HTMLAnchorElement ? el.href : null
@@ -240,14 +240,14 @@ export class PlaywrightExecutor {
           if (href && !this.isSameDomain(config.baseUrl, href)) {
             throw new Error(`Click blocked: target ${href} is outside domain`);
           }
-          await this.page!.click(step.selector, { timeout: 5000 });
-          await this.page!.waitForLoadState("domcontentloaded", { timeout: 8000 }).catch(() => {});
+          await this.page!.click(step.selector, { timeout: 10000 });
+          await this.page!.waitForLoadState("domcontentloaded", { timeout: 15000 }).catch(() => {});
           break;
         }
 
         case "type": {
           if (!step.selector || !step.value) throw new Error("Type step requires selector and value");
-          await this.page!.waitForSelector(step.selector, { timeout: 5000 });
+          await this.page!.waitForSelector(step.selector, { timeout: 10000 });
           await this.page!.fill(step.selector, step.value);
           break;
         }
@@ -263,7 +263,7 @@ export class PlaywrightExecutor {
         case "assert_element": {
           if (!step.selector) throw new Error("Assert element requires a selector");
           await this.page!.waitForSelector(step.selector, {
-            timeout: 5000,
+            timeout: 10000,
             state: "visible",
           });
           break;
@@ -479,10 +479,10 @@ export class PlaywrightExecutor {
 
     await this.cdp.send("Page.startScreencast", {
       format: "jpeg",
-      quality: 70,
+      quality: 50,
       maxWidth: 1280,
       maxHeight: 720,
-      everyNthFrame: 1,
+      everyNthFrame: 3,
     });
 
     this.cdp.on("Page.screencastFrame", async ({ data, sessionId }) => {

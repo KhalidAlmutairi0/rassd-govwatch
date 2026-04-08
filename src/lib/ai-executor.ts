@@ -135,12 +135,15 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
     const screenshotPath = path.join(artifactsDir, "full-page.png");
     await fs.writeFile(screenshotPath, fullScreenshot);
 
-    // Extract simplified HTML structure (only interactive elements, capped for token efficiency)
+    // Extract simplified HTML structure (only interactive elements)
     const htmlStructure = await page.evaluate(() => {
       const interactiveSelectors = [
-        "nav a[href]", "header a[href]", "header button",
-        "a[href]", "button", "[role='button']", "input", "select",
-        "[role='tab']", "[role='menuitem']",
+        "a[href]", "button", "[role='button']", "input", "select", "textarea",
+        "[role='tab']", "[role='menuitem']", "[role='link']",
+        "[onclick]", "[data-toggle]", "[data-bs-toggle]",
+        ".btn", "[class*='button']", "[class*='dropdown']",
+        "[class*='accordion']", "[class*='carousel']",
+        "nav a", "nav button", "header a", "header button"
       ];
 
       const elements: string[] = [];
@@ -176,9 +179,7 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
             `data-rect="${Math.round(rect.x)},${Math.round(rect.y)},${Math.round(rect.width)},${Math.round(rect.height)}"`,
           ].filter(Boolean).join(" ");
 
-          if (elements.length < 60) { // cap at 60 to save tokens
-            elements.push(`<${tag} ${attrs}>${text}</${tag}>`);
-          }
+          elements.push(`<${tag} ${attrs}>${text}</${tag}>`);
         });
       }
 
@@ -254,7 +255,7 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
 
     for (let i = 0; i < safeElements.length; i++) {
       const testAction = safeElements[i];
-      const stepNum = i; // 0-based index for frontend
+      const stepNum = i + 1;
 
       // Emit: starting this element
       emit({

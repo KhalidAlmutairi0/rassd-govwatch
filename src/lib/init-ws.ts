@@ -6,10 +6,19 @@ let initialized = false;
 
 export function ensureWebSocketServer() {
   if (initialized) return;
-  initialized = true; // Mark immediately to prevent double-init
 
-  const port = parseInt(process.env.WORKER_PORT || "3003");
-  // initWebSocketServer handles EADDRINUSE via an 'error' event handler
-  initWebSocketServer(port);
-  console.log(`[WS] WebSocket server init requested on port ${port}`);
+  try {
+    const port = parseInt(process.env.WORKER_PORT || "3003");
+    initWebSocketServer(port);
+    initialized = true;
+    console.log(`[WS] WebSocket server initialized on port ${port}`);
+  } catch (error: any) {
+    // Port already in use = WS server already running (e.g. worker process)
+    if (error.code === "EADDRINUSE") {
+      console.log("[WS] WebSocket server already running on port");
+      initialized = true;
+    } else {
+      console.error("[WS] Failed to start WebSocket server:", error);
+    }
+  }
 }

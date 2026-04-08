@@ -170,65 +170,29 @@ async function executeRun(
       runId,
       siteId,
       artifactsDir,
-      maxElements: 10,
+      maxElements: 20,
       timeoutPerElement: 4000,
       onBroadcast: send,  // ← browser frames + cursor events go through relay
       onProgress: (event) => {
         console.log(`[AI PLAN] Progress: ${event.phase} - ${event.description}`);
         if (event.type === "load") {
-          send({ type: "run-status", status: "running" });
-          send({
-            type: "step-update",
-            step: {
-              index: 0,
-              description: "Loading website...",
-              action: "navigate",
-              status: event.status === "completed" ? "passed" : "running",
-            },
-          });
+          send({ type: "run-status", status: "running", phase: "Loading page..." });
         } else if (event.type === "analysis") {
-          // Mark load step as passed, show analysis step
-          send({
-            type: "step-update",
-            step: {
-              index: 0,
-              description: "Loading website...",
-              action: "navigate",
-              status: "passed",
-            },
-          });
-          send({
-            type: "step-update",
-            step: {
-              index: 1,
-              description: "AI analyzing page and creating test plan...",
-              action: "analysis",
-              status: event.status === "completed" ? "passed" : "running",
-            },
-          });
+          send({ type: "run-status", status: "running", phase: "AI analyzing page..." });
         } else if (event.type === "testing") {
-          // Offset by 2 for the load + analysis steps
-          const stepIndex = (event.currentStep ?? 0) + 2;
           send({
             type: "step-update",
             step: {
-              index: stepIndex,
+              index: event.currentStep || 0,
+              total: event.totalSteps || 0,
+              elementType: event.elementType,
               description: event.description,
-              action: event.elementType || "click",
               status: event.status === "running" ? "running" : event.status === "completed" ? "passed" : "failed",
-              durationMs: event.responseTimeMs,
+              responseTimeMs: event.responseTimeMs,
             },
           });
         } else if (event.type === "summary") {
-          send({
-            type: "step-update",
-            step: {
-              index: 1,
-              description: "AI analyzing page and creating test plan...",
-              action: "analysis",
-              status: "passed",
-            },
-          });
+          send({ type: "run-status", status: "running", phase: "Generating AI summary..." });
         } else if (event.type === "complete") {
           send({ type: "run-complete", status: event.status === "completed" ? "passed" : "failed", summary: event.data?.summary });
         }
@@ -237,34 +201,19 @@ async function executeRun(
 
     console.log(`[AI EXECUTOR] Test completed with status: ${result.overallStatus}`);
 
-    const passedCount = result.results.filter((e) => e.status === "passed" || e.status === "warning").length;
-    const failedCount = result.results.filter((e) => e.status === "failed").length;
-    const finalStatus = result.overallStatus === "passed" ? "passed" : result.overallStatus === "warning" ? "passed" : "failed";
-
-    // Write all stats back to the Run record
-    await prisma.run.update({
-      where: { id: runId },
-      data: {
-        status: finalStatus,
-        durationMs: result.totalDuration,
-        totalSteps: result.results.length,
-        passedSteps: passedCount,
-        failedSteps: failedCount,
-        finishedAt: new Date(),
-      },
-    });
-
     await prisma.site.update({ where: { id: siteId }, data: { lastRunAt: new Date() } });
 
     const failedElements = result.results.filter((e) => e.status === "failed");
     if (failedElements.length > 0) {
       await processRunResult(runId, siteId, journeyId, "failed",
         failedElements.map((e) => ({ status: "failed" as const, error: e.actualBehavior })) as any);
+    } else if (result.overallStatus === "failed") {
+      await processRunResult(runId, siteId, journeyId, "failed", [{ status: "failed", error: "Test failed" }] as any);
     } else {
-      await processRunResult(runId, siteId, journeyId, finalStatus as any, [] as any);
+      await processRunResult(runId, siteId, journeyId, "passed", [] as any);
     }
 
-    console.log(`[AI EXECUTOR] Run ${runId} completed — ${passedCount} passed, ${failedCount} failed, ${result.totalDuration}ms`);
+    console.log(`[AI EXECUTOR] Run ${runId} completed successfully`);
   } catch (error) {
     console.error(`[AI EXECUTOR] Error executing run ${runId}:`, error);
     await prisma.run.update({
