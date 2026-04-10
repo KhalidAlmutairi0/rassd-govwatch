@@ -1,6 +1,8 @@
 // src/lib/incidents.ts
 import { prisma } from "./prisma";
 import { StepResult } from "./executor";
+import { sendIncidentAlert, sendRecoveryAlert } from "./notifications";
+import { startEscalationTimer, resolveEscalationTimer } from "./escalation";
 
 export async function processRunResult(
   runId: string,
@@ -9,8 +11,9 @@ export async function processRunResult(
   overallStatus: "passed" | "failed" | "error",
   steps: StepResult[]
 ) {
+  const site = await prisma.site.findUnique({ where: { id: siteId } });
+
   if (overallStatus === "failed" || overallStatus === "error") {
-    // Check for existing open incident
     const existing = await prisma.incident.findFirst({
       where: {
         siteId,
@@ -24,58 +27,98 @@ export async function processRunResult(
       .map((s) => s.error!)
       .join("; ");
 
+    const severity = calculateSeverity(existing ? existing.occurrences + 1 : 1, steps);
+
+    let incidentId: string;
+
     if (existing) {
-      // Increment existing incident
       await prisma.incident.update({
         where: { id: existing.id },
         data: {
           occurrences: existing.occurrences + 1,
           lastSeenAt: new Date(),
-          severity: calculateSeverity(existing.occurrences + 1, steps),
+          severity,
           description: errorMessages,
         },
       });
+      incidentId = existing.id;
     } else {
-      // Create new incident
       const journey = await prisma.journey.findUnique({ where: { id: journeyId } });
-      await prisma.incident.create({
+      const incident = await prisma.incident.create({
         data: {
           siteId,
           journeyId,
           title: `${journey?.name || "Test"} failing on ${new Date().toLocaleDateString()}`,
           description: errorMessages,
-          severity: calculateSeverity(1, steps),
+          severity,
           status: "open",
         },
       });
+      incidentId = incident.id;
+
+      // Start escalation timer for new incidents (async — non-blocking)
+      startEscalationTimer(incidentId).catch(console.error);
+
+      // Send incident alert (async — non-blocking)
+      sendIncidentAlert({
+        siteName: site?.name || "Unknown Site",
+        siteNameAr: site?.nameAr ?? undefined,
+        ministryName: site?.ministryName ?? undefined,
+        severity,
+        description: errorMessages,
+        incidentId,
+        siteId,
+      }).catch(console.error);
     }
 
-    // Update site status
     await prisma.site.update({
       where: { id: siteId },
       data: { status: overallStatus === "error" ? "down" : "degraded" },
     });
+
   } else if (overallStatus === "passed") {
-    // Resolve any open incidents for this journey
-    await prisma.incident.updateMany({
+    // Find open incidents to resolve
+    const openIncidents = await prisma.incident.findMany({
       where: {
         siteId,
         journeyId,
         status: { in: ["open", "investigating"] },
       },
-      data: {
-        status: "resolved",
-        resolvedAt: new Date(),
-      },
     });
 
-    // Update site status (check if all journeys are healthy)
-    const openIncidents = await prisma.incident.count({
+    if (openIncidents.length > 0) {
+      const now = new Date();
+      await prisma.incident.updateMany({
+        where: {
+          siteId,
+          journeyId,
+          status: { in: ["open", "investigating"] },
+        },
+        data: { status: "resolved", resolvedAt: now },
+      });
+
+      // Resolve escalation timers and send recovery notifications
+      for (const incident of openIncidents) {
+        const durationMs = now.getTime() - incident.firstSeenAt.getTime();
+
+        resolveEscalationTimer(incident.id).catch(console.error);
+        sendRecoveryAlert({
+          siteName: site?.name || "Unknown Site",
+          ministryName: site?.ministryName ?? undefined,
+          durationMs,
+          incidentId: incident.id,
+          siteId,
+        }).catch(console.error);
+      }
+    }
+
+    const remainingOpenIncidents = await prisma.incident.count({
       where: { siteId, status: { in: ["open", "investigating"] } },
     });
+
     await prisma.site.update({
       where: { id: siteId },
-      data: { status: openIncidents > 0 ? "degraded" : "healthy" },
+      data: { status: remainingOpenIncidents > 0 ? "degraded" : "healthy" },
     });
   }
 }
@@ -88,15 +131,9 @@ function calculateSeverity(
   const totalCount = steps.length;
   const failRate = failedCount / totalCount;
 
-  // Critical: 3+ consecutive failures OR all steps failed
+  if (steps[0]?.status === "failed") return "critical"; // Homepage down = critical
   if (occurrences >= 3 || failRate === 1) return "critical";
-
-  // High: 2 consecutive failures OR >75% failed
   if (occurrences >= 2 || failRate > 0.75) return "high";
-
-  // Medium: >50% failed
   if (failRate > 0.5) return "medium";
-
-  // Low: less than half failed
   return "low";
 }

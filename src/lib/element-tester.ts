@@ -48,25 +48,12 @@ export async function testElement(
     page.on('console', consoleListener);
     page.on('response', responseListener);
 
-    // 1. Scroll element into view
+    // 1. Scroll element into view so it's visible during the live stream
     try {
-      await page.locator(element.selector).scrollIntoViewIfNeeded({ timeout: 5000 });
-      await page.waitForTimeout(300); // Wait for smooth scrolling
-    } catch (error) {
-      return {
-        element,
-        status: 'failed',
-        responseTimeMs: Date.now() - startTime,
-        screenshotBefore: '',
-        screenshotAfter: '',
-        urlChanged: false,
-        urlBefore: page.url(),
-        urlAfter: page.url(),
-        consoleErrors: [],
-        networkErrors: [],
-        domChanges: '',
-        error: `Element not found or not scrollable: ${element.selector}`,
-      };
+      await page.locator(element.selector).scrollIntoViewIfNeeded({ timeout: 3000 });
+      await page.waitForTimeout(300);
+    } catch {
+      // Continue even if scroll fails — element may still be interactable
     }
 
     // 2. Record current state

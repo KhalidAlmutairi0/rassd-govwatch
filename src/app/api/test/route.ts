@@ -91,9 +91,16 @@ export async function POST(request: Request) {
       await prisma.site.delete({ where: { id: tempSiteId } }).catch(() => {});
     }
 
-    return NextResponse.json(
-      { error: error.message || "Test setup failed" },
-      { status: 500 }
-    );
+    const msg: string = error.message ?? "";
+    let friendly = "Test setup failed. Please try again.";
+    if (msg.includes("net::") || msg.includes("ERR_CONNECTION")) {
+      friendly = "Could not reach this site. It may be blocking automated access or is currently down.";
+    } else if (msg.includes("timeout") || msg.includes("Timeout")) {
+      friendly = "The site took too long to respond. Please try again.";
+    } else if (msg.includes("Invalid URL") || msg.includes("parse")) {
+      friendly = "Invalid URL. Please enter a valid website address.";
+    }
+
+    return NextResponse.json({ error: friendly }, { status: 500 });
   }
 }

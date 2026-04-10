@@ -60,6 +60,12 @@ export async function analyzePageAndCreatePlan(
   accessibilityTree?: string    // Semantic accessibility tree (structured page representation)
 ): Promise<AgentTestPlan> {
 
+  // No AI key — use heuristic immediately instead of getting empty results
+  if (detectProvider() === "none") {
+    console.log("[AI] No AI provider configured — using heuristic analysis");
+    return fallbackAnalysis(url, metadata, htmlStructure);
+  }
+
   const prompt = `You are an expert QA tester for Saudi government websites.
 
 I'm showing you a screenshot of a government website, its HTML structure, and its accessibility tree.
@@ -199,6 +205,11 @@ export async function assessElementResult(
     pageTitle: string;
   }
 ): Promise<{ status: string; assessment: string }> {
+
+  // No AI key — use heuristic assessment immediately
+  if (detectProvider() === "none") {
+    return fallbackAssessment(testAction, context);
+  }
 
   const prompt = `You are a QA tester. You just tested an element on a Saudi government website.
 
@@ -467,72 +478,119 @@ function fallbackAnalysis(
   metadata: { title: string; description?: string; lang?: string },
   htmlStructure: string
 ): AgentTestPlan {
-  console.log("⚠️ No AI API key detected — using heuristic analysis");
+  console.log("⚠️ AI rate-limited or unavailable — using heuristic analysis");
 
-  // Basic page understanding
   const pageUnderstanding = {
     siteName: metadata.title,
     siteNameAr: "",
     pageType: "homepage",
     language: metadata.lang || "unknown",
-    description: `Automated test for ${metadata.title}`,
+    description: `Automated heuristic test for ${metadata.title}`,
     descriptionAr: `اختبار آلي لـ ${metadata.title}`,
   };
 
-  // Extract elements from HTML structure heuristically
   const elements: AgentTestAction[] = [];
   const lines = htmlStructure.split("\n");
+  const seen = new Set<string>();
+  // Simple CSS ID escaper for Node.js (CSS.escape is browser-only)
+  const escapeId = (s: string) => s.replace(/([!"#$%&'()*+,.\/:;<=>?@[\\\]^`{|}~])/g, '\\$1');
+
   let id = 1;
 
   for (const line of lines) {
-    if (id > 80) break; // Max 80 elements
+    if (id > 20) break;
 
     const tag = line.match(/<(\w+)/)?.[1];
-    if (!tag) continue;
+    if (!tag || !["a", "button", "input"].includes(tag)) continue;
 
-    const textMatch = line.match(/>([^<]+)</);
-    const text = textMatch ? textMatch[1].trim().slice(0, 50) : "";
-    if (!text || text.length < 2) continue;
+    const textMatch = line.match(/>([^<]{2,60})</);
+    const text = textMatch ? textMatch[1].trim() : "";
 
-    const hrefMatch = line.match(/href="([^"]+)"/);
+    const hrefMatch = line.match(/href="([^"#][^"]{0,200})"/);
     const href = hrefMatch ? hrefMatch[1] : "";
 
-    // Classify element
+    const idMatch = line.match(/\bid="([^"]+)"/);
+    const ariaLabel = line.match(/aria-label="([^"]+)"/)?.[1] || "";
+    const nameAttr = line.match(/\bname="([^"]+)"/)?.[1] || "";
+    const typeAttr = line.match(/\btype="([^"]+)"/)?.[1] || "";
+    const placeholder = line.match(/placeholder="([^"]+)"/)?.[1] || "";
+
+    // Build a reliable CSS selector (no :contains — not valid CSS)
+
+    let selector = "";
+    if (idMatch) {
+      selector = `#${escapeId(idMatch[1])}`;
+    } else if (href && href.startsWith("/")) {
+      selector = `a[href="${href}"]`;
+    } else if (href && href.startsWith("http")) {
+      // Use text-based approach for external links
+      selector = `a[href*="${new URL(href).pathname.slice(0, 30)}"]`;
+    } else if (ariaLabel) {
+      selector = `[aria-label="${ariaLabel}"]`;
+    } else if (nameAttr && tag === "input") {
+      selector = `input[name="${nameAttr}"]`;
+    } else if (typeAttr && tag === "input") {
+      selector = `input[type="${typeAttr}"]`;
+    } else if (text && text.length > 1) {
+      // Use element text as the display name; findElement() will use getByText fallback
+      selector = tag === "a" && href ? `a[href]` : tag;
+    } else {
+      continue;
+    }
+
+    // Deduplicate by selector
+    if (seen.has(selector)) continue;
+    seen.add(selector);
+
+    const displayText = text || ariaLabel || placeholder || nameAttr || `${tag} element`;
+    const isSafe = !(/login|logout|sign|دخول|خروج|delete|حذف|submit|إرسال|payment|دفع|download|تحميل|nafath|نفاذ/i.test(displayText + href));
+
     let type = "button";
-    let action = "click";
+    let action: "click" | "hover" | "type" | "select" = "click";
     let section = "content";
     let priority: "high" | "medium" | "low" = "medium";
 
     if (tag === "a") {
-      type = "nav-link";
-      action = "click";
-      if (line.includes("nav")) section = "nav";
-      if (line.includes("footer")) section = "footer";
-      priority = section === "nav" ? "high" : "low";
+      type = "nav-link"; action = "click";
+      section = line.includes("nav") || line.includes("header") ? "nav" : "content";
+      priority = section === "nav" ? "high" : "medium";
     } else if (tag === "button") {
-      type = "button";
-      action = "click";
-      priority = "high";
+      type = "button"; action = "click"; priority = "high";
     } else if (tag === "input") {
-      type = "form-input";
-      action = "type";
-      priority = "medium";
+      if (typeAttr === "search" || nameAttr.includes("search") || placeholder.includes("بحث") || placeholder.toLowerCase().includes("search")) {
+        type = "search"; action = "type"; priority = "high";
+      } else {
+        type = "form-input"; action = "type"; priority = "medium";
+      }
     }
-
-    // Safety check
-    const isSafe = !(/login|logout|sign|دخول|خروج|delete|حذف|submit|إرسال|payment|دفع|download|تحميل|nafath|نفاذ/i.test(text));
 
     elements.push({
       id: id++,
-      element: text,
-      selector: href ? `a[href="${href}"]` : `${tag}:contains("${text.slice(0, 20)}")`,
+      element: displayText,
+      selector,
       type,
       action,
-      reason: `Test ${type} interaction`,
+      reason: `Heuristic test of ${type}`,
       priority,
-      expectedBehavior: `Should ${action} successfully`,
+      expectedBehavior: action === "click" ? "Page or state should change" : "Should accept input",
       isSafe,
       section,
+    });
+  }
+
+  // Always ensure at least a homepage load test
+  if (elements.length === 0) {
+    elements.push({
+      id: 1,
+      element: "Homepage load check",
+      selector: "body",
+      type: "nav-link",
+      action: "click",
+      reason: "Verify page loaded and has content",
+      priority: "high",
+      expectedBehavior: "Page body should be visible with content",
+      isSafe: true,
+      section: "content",
     });
   }
 

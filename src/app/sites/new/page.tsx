@@ -10,9 +10,9 @@ export default function AddNewSite() {
   const [form, setForm] = useState({
     name: "",
     url: "",
+    scheduledScans: false,
     username: "",
     password: "",
-    scheduledScans: false,
     notifyOnComplete: true,
     notifyOnDrop: false,
     slackWebhook: "",
@@ -21,10 +21,10 @@ export default function AddNewSite() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const update = (field: string, value: any) =>
-    setForm((prev) => ({ ...prev, [field]: value }));
+  const update = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) =>
+    setForm((prev) => ({ ...prev, [key]: value }));
 
-  const handleAddSite = async () => {
+  const handleAddAndRun = async () => {
     if (!form.url) { setError("URL is required"); return; }
     setLoading(true);
     setError("");
@@ -32,34 +32,47 @@ export default function AddNewSite() {
       const res = await fetch("/api/sites", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: form.name || form.url, baseUrl: form.url }),
+        body: JSON.stringify({
+          name: form.name || new URL(form.url).hostname.replace("www.", ""),
+          baseUrl: form.url,
+          schedule: form.scheduledScans ? 10 : 0,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to add site");
-      router.push("/dashboard");
+      if (data.run?.id) {
+        router.push(`/live/${data.run.id}`);
+      } else {
+        router.push("/sites");
+      }
     } catch (err: any) {
       setError(err.message);
+      setLoading(false);
     }
-    setLoading(false);
   };
 
-  const handleAddAndRun = async () => {
+  const handleAddOnly = async () => {
     if (!form.url) { setError("URL is required"); return; }
     setLoading(true);
     setError("");
     try {
-      const res = await fetch("/api/test", {
+      const res = await fetch("/api/sites", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: form.url, name: form.name }),
+        body: JSON.stringify({
+          name: form.name || new URL(form.url).hostname.replace("www.", ""),
+          baseUrl: form.url,
+          schedule: form.scheduledScans ? 10 : 0,
+          skipRun: true,
+        }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to start scan");
-      router.push(`/live/${data.runId}`);
+      if (!res.ok) throw new Error(data.error || "Failed to add site");
+      router.push("/sites");
     } catch (err: any) {
       setError(err.message);
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   return (
@@ -67,7 +80,7 @@ export default function AddNewSite() {
       <div className="w-full max-w-[560px]">
         {/* Back */}
         <Link
-          href="/dashboard"
+          href="/sites"
           className="inline-flex items-center gap-1.5 text-sm text-[hsl(var(--muted-foreground))] hover:text-white mb-6 transition-colors"
         >
           <ArrowLeft className="w-4 h-4" />
@@ -84,32 +97,26 @@ export default function AddNewSite() {
         <div className="bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-xl p-6 space-y-5">
 
           {/* Site Name */}
-          <div>
-            <label className="block text-sm font-medium text-white mb-1.5">
-              Site Name
-            </label>
+          <Field label="Site Name">
             <input
               type="text"
               value={form.name}
               onChange={(e) => update("name", e.target.value)}
               placeholder="My Awesome App"
-              className="w-full px-3 py-2.5 text-sm bg-[hsl(var(--background))] border border-[hsl(var(--border))] rounded-lg text-white placeholder:text-[hsl(var(--muted-foreground))] focus:outline-none focus:ring-1 focus:ring-emerald-600 transition"
+              className={INPUT_CLS}
             />
-          </div>
+          </Field>
 
           {/* URL */}
-          <div>
-            <label className="block text-sm font-medium text-white mb-1.5">
-              URL
-            </label>
+          <Field label="URL" required>
             <input
               type="url"
               value={form.url}
               onChange={(e) => update("url", e.target.value)}
               placeholder="https://example.com"
-              className="w-full px-3 py-2.5 text-sm bg-[hsl(var(--background))] border border-[hsl(var(--border))] rounded-lg text-white placeholder:text-[hsl(var(--muted-foreground))] focus:outline-none focus:ring-1 focus:ring-emerald-600 transition"
+              className={INPUT_CLS}
             />
-          </div>
+          </Field>
 
           {/* Auth credentials (collapsible) */}
           <div className="border border-[hsl(var(--border))] rounded-lg overflow-hidden">
@@ -119,106 +126,82 @@ export default function AddNewSite() {
               className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-white hover:bg-white/5 transition-colors"
             >
               Authentication Credentials (Optional)
-              {showAuth ? <ChevronUp className="w-4 h-4 text-[hsl(var(--muted-foreground))]" /> : <ChevronDown className="w-4 h-4 text-[hsl(var(--muted-foreground))]" />}
+              {showAuth ? (
+                <ChevronUp className="w-4 h-4 text-[hsl(var(--muted-foreground))]" />
+              ) : (
+                <ChevronDown className="w-4 h-4 text-[hsl(var(--muted-foreground))]" />
+              )}
             </button>
             {showAuth && (
-              <div className="px-4 pb-4 space-y-3 border-t border-[hsl(var(--border))]">
-                <div className="pt-3">
-                  <label className="block text-xs font-medium text-[hsl(var(--muted-foreground))] mb-1.5">
-                    Username
-                  </label>
+              <div className="px-4 pb-4 space-y-3 border-t border-[hsl(var(--border))] pt-3">
+                <Field label="Username">
                   <input
                     type="text"
                     value={form.username}
                     onChange={(e) => update("username", e.target.value)}
                     placeholder="demo@scanux.app"
-                    className="w-full px-3 py-2 text-sm bg-[hsl(var(--background))] border border-[hsl(var(--border))] rounded-lg text-white placeholder:text-[hsl(var(--muted-foreground))] focus:outline-none focus:ring-1 focus:ring-emerald-600 transition"
+                    className={INPUT_CLS}
                   />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-[hsl(var(--muted-foreground))] mb-1.5">
-                    Password
-                  </label>
+                </Field>
+                <Field label="Password">
                   <input
                     type="password"
                     value={form.password}
                     onChange={(e) => update("password", e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full px-3 py-2 text-sm bg-[hsl(var(--background))] border border-[hsl(var(--border))] rounded-lg text-white placeholder:text-[hsl(var(--muted-foreground))] focus:outline-none focus:ring-1 focus:ring-emerald-600 transition"
+                    placeholder="password123"
+                    className={INPUT_CLS}
                   />
-                </div>
+                </Field>
               </div>
             )}
           </div>
 
-          {/* Scheduled Scans */}
-          <div className="flex items-start justify-between">
+          {/* Enable Scheduled Scans */}
+          <div className="flex items-start justify-between gap-4">
             <div>
               <p className="text-sm font-medium text-white">Enable Scheduled Scans</p>
               <p className="text-xs text-[hsl(var(--muted-foreground))] mt-0.5">
-                Automatically scan this site on a recurring basis.
+                {form.scheduledScans
+                  ? "✅ Will auto-scan every 10 minutes"
+                  : "Automatically scan this site every 10 minutes."}
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => update("scheduledScans", !form.scheduledScans)}
-              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                form.scheduledScans ? "bg-emerald-600" : "bg-[hsl(var(--border))]"
-              }`}
-            >
-              <span
-                className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
-                  form.scheduledScans ? "translate-x-4" : "translate-x-0.5"
-                }`}
-              />
-            </button>
+            <Toggle
+              checked={form.scheduledScans}
+              onChange={(v) => update("scheduledScans", v)}
+            />
           </div>
 
           {/* Notifications */}
           <div>
-            <p className="text-sm font-medium text-white mb-2">Notifications</p>
-            <div className="space-y-2">
-              <label className="flex items-center gap-2.5 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={form.notifyOnComplete}
-                  onChange={(e) => update("notifyOnComplete", e.target.checked)}
-                  className="w-4 h-4 rounded border-[hsl(var(--border))] accent-emerald-600"
-                />
-                <span className="text-sm text-[hsl(var(--muted-foreground))]">
-                  Email when scan completes
-                </span>
-              </label>
-              <label className="flex items-center gap-2.5 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={form.notifyOnDrop}
-                  onChange={(e) => update("notifyOnDrop", e.target.checked)}
-                  className="w-4 h-4 rounded border-[hsl(var(--border))] accent-emerald-600"
-                />
-                <span className="text-sm text-[hsl(var(--muted-foreground))]">
-                  Email when score drops below threshold
-                </span>
-              </label>
+            <p className="text-sm font-medium text-white mb-3">Notifications</p>
+            <div className="space-y-2.5">
+              <CheckboxRow
+                label="Email when scan completes"
+                checked={form.notifyOnComplete}
+                onChange={(v) => update("notifyOnComplete", v)}
+              />
+              <CheckboxRow
+                label="Email when score drops below threshold"
+                checked={form.notifyOnDrop}
+                onChange={(v) => update("notifyOnDrop", v)}
+              />
             </div>
           </div>
 
-          {/* Slack webhook */}
-          <div>
-            <label className="block text-sm font-medium text-white mb-1.5">
-              Slack Webhook URL
-            </label>
+          {/* Slack Webhook */}
+          <Field label="Slack Webhook URL">
             <input
               type="url"
               value={form.slackWebhook}
               onChange={(e) => update("slackWebhook", e.target.value)}
               placeholder="https://hooks.slack.com/services/..."
-              className="w-full px-3 py-2.5 text-sm bg-[hsl(var(--background))] border border-[hsl(var(--border))] rounded-lg text-white placeholder:text-[hsl(var(--muted-foreground))] focus:outline-none focus:ring-1 focus:ring-emerald-600 transition"
+              className={INPUT_CLS}
             />
             <p className="text-xs text-[hsl(var(--muted-foreground))] mt-1">
               Optional. Receive scan notifications in Slack.
             </p>
-          </div>
+          </Field>
 
           {error && (
             <div className="text-sm text-red-400 bg-red-950/40 border border-red-900/40 px-3 py-2 rounded-lg">
@@ -227,20 +210,20 @@ export default function AddNewSite() {
           )}
 
           {/* Actions */}
-          <div className="flex gap-3 pt-1">
+          <div className="flex gap-3 pt-1 justify-end">
             <button
               type="button"
-              onClick={handleAddSite}
+              onClick={handleAddOnly}
               disabled={loading}
-              className="flex-1 py-2.5 text-sm font-medium rounded-lg border border-[hsl(var(--border))] text-white hover:bg-white/5 disabled:opacity-40 transition-colors"
+              className="px-5 py-2.5 text-sm font-medium rounded-lg border border-[hsl(var(--border))] text-white hover:bg-white/5 disabled:opacity-40 transition-colors"
             >
               Add Site
             </button>
             <button
               type="button"
               onClick={handleAddAndRun}
-              disabled={loading}
-              className="flex-1 py-2.5 text-sm font-medium rounded-lg bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-white transition-colors"
+              disabled={loading || !form.url}
+              className="px-5 py-2.5 text-sm font-medium rounded-lg bg-[hsl(var(--foreground))] text-[hsl(var(--background))] hover:opacity-90 disabled:opacity-40 transition-colors"
             >
               {loading ? "Starting..." : "Add Site & Run First Scan"}
             </button>
@@ -248,5 +231,84 @@ export default function AddNewSite() {
         </div>
       </div>
     </div>
+  );
+}
+
+const INPUT_CLS =
+  "w-full px-3 py-2.5 text-sm bg-[hsl(var(--background))] border border-[hsl(var(--border))] rounded-lg text-white placeholder:text-[hsl(var(--muted-foreground))] focus:outline-none focus:ring-1 focus:ring-white/30 transition";
+
+function Field({
+  label,
+  required,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <label className="block text-sm font-medium text-white mb-1.5">
+        {label} {required && <span className="text-red-400">*</span>}
+      </label>
+      {children}
+    </div>
+  );
+}
+
+function Toggle({
+  checked,
+  onChange,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <button
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className={`relative w-10 h-6 rounded-full transition-colors shrink-0 ${
+        checked ? "bg-emerald-600" : "bg-white/20"
+      }`}
+    >
+      <span
+        className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
+          checked ? "translate-x-[18px]" : "translate-x-0.5"
+        }`}
+      />
+    </button>
+  );
+}
+
+function CheckboxRow({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <label className="flex items-center gap-3 cursor-pointer group">
+      <span
+        onClick={() => onChange(!checked)}
+        className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors cursor-pointer ${
+          checked
+            ? "bg-emerald-600 border-emerald-600"
+            : "border-[hsl(var(--border))] bg-transparent group-hover:border-white/30"
+        }`}
+      >
+        {checked && (
+          <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 10 8" fill="none">
+            <path d="M1 4L3.5 6.5L9 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
+      </span>
+      <span className="text-sm text-[hsl(var(--muted-foreground))] group-hover:text-white transition-colors">
+        {label}
+      </span>
+    </label>
   );
 }

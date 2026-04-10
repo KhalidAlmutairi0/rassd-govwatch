@@ -111,7 +111,7 @@ export async function discoverElements(page: Page, baseUrl: string): Promise<Dis
             // Get href for links
             let href: string | undefined;
             if (config.type === 'link') {
-              href = await handle.getAttribute('href').catch(() => undefined);
+              href = (await handle.getAttribute('href').catch(() => undefined)) ?? undefined;
               // Skip external links and javascript: links
               if (href) {
                 if (href.startsWith('javascript:') || href.startsWith('#')) continue;

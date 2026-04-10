@@ -313,9 +313,9 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
           continue;
         }
 
-        // Scroll into view smoothly
+        // Scroll element into view so it's visible during the live stream
         await element.scrollIntoViewIfNeeded();
-        await page.waitForTimeout(80 + Math.round(Math.random() * 60));
+        await page.waitForTimeout(300);
 
         // Get bounding box for cursor position
         const box = await element.boundingBox();
@@ -334,10 +334,13 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
         // Brief pause before acting — humans look before they click
         await page.waitForTimeout(120 + Math.round(Math.random() * 80));
 
-        // Screenshot BEFORE
-        const beforeScreenshot = await page.screenshot();
+        // Screenshot BEFORE — wrapped in try/catch in case page is mid-load
+        let beforeScreenshot: Buffer = Buffer.alloc(0);
         const beforePath = path.join(artifactsDir, `element-${stepNum}-before.png`);
-        await fs.writeFile(beforePath, beforeScreenshot);
+        try {
+          beforeScreenshot = await page.screenshot({ timeout: 5000 });
+          await fs.writeFile(beforePath, beforeScreenshot);
+        } catch { /* page may be loading — skip */ }
 
         // Record state before action
         const urlBefore = page.url();
@@ -351,9 +354,12 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
 
         switch (testAction.action) {
           case "click":
-            await page.mouse.down();
-            await page.waitForTimeout(60 + Math.round(Math.random() * 40));
-            await page.mouse.up();
+            try {
+              await element.click({ timeout: timeoutPerElement, force: false });
+            } catch {
+              // Fallback: raw mouse click at element center
+              await page.mouse.click(cursorX, cursorY);
+            }
             break;
           case "hover":
             await element.hover({ timeout: timeoutPerElement });
@@ -375,13 +381,27 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
 
         const responseTimeMs = Date.now() - startTime;
 
-        // Human-like pause after action — wait for the page to react
-        await page.waitForTimeout(350 + Math.round(Math.random() * 150));
+        // Wait for any navigation/load triggered by the action
+        await Promise.race([
+          page.waitForLoadState("domcontentloaded", { timeout: 5000 }),
+          page.waitForTimeout(1000),
+        ]).catch(() => {});
 
-        // Screenshot AFTER
-        const afterScreenshot = await page.screenshot();
+        // Human-like pause after action
+        await page.waitForTimeout(300 + Math.round(Math.random() * 150));
+
+        // Screenshot AFTER — wrapped in try/catch in case page navigated away
+        let afterScreenshot: Buffer = beforeScreenshot;
         const afterPath = path.join(artifactsDir, `element-${stepNum}-after.png`);
-        await fs.writeFile(afterPath, afterScreenshot);
+        try {
+          afterScreenshot = await page.screenshot({ timeout: 5000 });
+          await fs.writeFile(afterPath, afterScreenshot);
+        } catch {
+          // If screenshot fails (e.g. page is navigating), reuse before screenshot
+          if (beforeScreenshot.length > 0) {
+            await fs.writeFile(afterPath, beforeScreenshot).catch(() => {});
+          }
+        }
 
         // Check what changed
         const urlAfter = page.url();

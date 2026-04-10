@@ -25,7 +25,14 @@ export default function Home() {
       if (!response.ok) throw new Error(data.error || "Test failed");
       router.push(`/live/${data.runId}`);
     } catch (err: any) {
-      setError(err.message);
+      const msg: string = err.message ?? "";
+      if (msg.includes("ERR_CONNECTION_RESET") || msg.includes("ERR_CONNECTION_REFUSED") || msg.includes("ERR_NAME_NOT_RESOLVED") || msg.includes("net::")) {
+        setError("Could not reach this site. It may be blocking automated access or is currently down.");
+      } else if (msg.includes("timeout") || msg.includes("Timeout")) {
+        setError("The site took too long to respond. Please try again.");
+      } else {
+        setError("Scan failed. Please check the URL and try again.");
+      }
       setLoading(false);
     }
   };

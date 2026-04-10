@@ -2,6 +2,27 @@
 @tailwind components;
 @tailwind utilities;
 
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Ken Burns camera drift — makes screenshots look like live video footage */
+@keyframes kb-drift {
+  0%   { transform: scale(1.08) translate(0px, 0px); }
+  100% { transform: scale(1.13) translate(-6px, -4px); }
+}
+
+/* Fix browser autofill overriding dark input backgrounds */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+  -webkit-text-fill-color: white !important;
+  -webkit-box-shadow: 0 0 0 1000px #1a1745 inset !important;
+  caret-color: white;
+}
+
 @layer base {
   .font-cairo {
     font-family: var(--font-cairo), "Cairo", sans-serif;
@@ -10,29 +31,34 @@
 
 @layer base {
   :root {
-    --background: 0 0% 7%;
+    /* Developer (dark) theme — blue accent replaces emerald */
+    --background: 222 47% 7%;
     --foreground: 0 0% 98%;
-    --card: 0 0% 10%;
+    --card: 222 47% 10%;
     --card-foreground: 0 0% 98%;
-    --popover: 0 0% 10%;
+    --popover: 222 47% 10%;
     --popover-foreground: 0 0% 98%;
-    --primary: 142 72% 29%;
+    --primary: 217 91% 60%;        /* blue-500 */
     --primary-foreground: 0 0% 98%;
-    --secondary: 0 0% 15%;
+    --secondary: 222 47% 15%;
     --secondary-foreground: 0 0% 98%;
-    --muted: 0 0% 15%;
-    --muted-foreground: 0 0% 55%;
-    --accent: 0 0% 15%;
+    --muted: 222 47% 15%;
+    --muted-foreground: 217 20% 55%;
+    --accent: 222 47% 15%;
     --accent-foreground: 0 0% 98%;
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 16%;
-    --input: 0 0% 16%;
-    --ring: 142 72% 29%;
+    --border: 222 47% 16%;
+    --input: 222 47% 16%;
+    --ring: 217 91% 60%;
     --radius: 0.5rem;
-    --sidebar: 0 0% 6%;
+    --sidebar: 222 47% 6%;
     --sidebar-foreground: 0 0% 98%;
-    --sidebar-border: 0 0% 14%;
+    --sidebar-border: 222 47% 14%;
+
+    /* Brand blue for developer UI */
+    --brand: 221 83% 45%;          /* #1D4ED8 blue-700 */
+    --brand-light: 217 91% 60%;    /* #3B82F6 blue-500 */
   }
 }
 
@@ -54,11 +80,11 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: hsl(0 0% 25%);
+  background: hsl(222 47% 25%);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(0 0% 35%);
+  background: hsl(222 47% 35%);
 }
 
 /* Score circle animation */

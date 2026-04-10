@@ -6,6 +6,8 @@ import { prisma } from "../lib/prisma";
 import { executeAITest } from "../lib/ai-executor";
 import { processRunResult } from "../lib/incidents";
 import { initWebSocketServer } from "../lib/ws-server";
+import { checkEscalations } from "../lib/escalation";
+import { storeSiteScore } from "../lib/scoring";
 import path from "path";
 
 console.log("🚀 GovWatch Worker started");
@@ -19,6 +21,9 @@ console.log("⏰ Scheduler running (checks every minute)");
 
 // Run every minute, check which sites need execution
 cron.schedule("* * * * *", async () => {
+  // Check escalation timers every minute
+  checkEscalations().catch(console.error);
+
   try {
     const sites = await prisma.site.findMany({
       where: { isActive: true, schedule: { gt: 0 } },
@@ -51,17 +56,21 @@ async function runJourney(site: any, journey: any) {
     data: {
       siteId: site.id,
       journeyId: journey.id,
-      status: "queued",
+      status: "running",
       triggeredBy: "scheduler",
-      totalSteps: 0, // AI will determine this dynamically
+      totalSteps: 0,
     },
   });
+
+  // Broadcast to any live viewers watching this run
+  const { broadcast } = await import("../lib/ws-server");
+  broadcast(run.id, { type: "run-status", status: "running" });
 
   try {
     // Set up artifacts directory
     const artifactsDir = path.join(process.cwd(), "artifacts", site.id, run.id);
 
-    // Execute AI test (no WebSocket broadcasting for scheduled runs)
+    // Execute AI test — broadcast frames so governor can watch live
     const result = await executeAITest({
       url: site.baseUrl,
       runId: run.id,
@@ -69,18 +78,48 @@ async function runJourney(site: any, journey: any) {
       artifactsDir,
       maxElements: 80,
       timeoutPerElement: 5000,
+      onBroadcast: (msg: object) => broadcast(run.id, msg),
       onProgress: (event) => {
-        // Just log progress for scheduled runs (no WebSocket)
         console.log(`  ${event.phase}: ${event.description}`);
+        broadcast(run.id, {
+          type: "step-update",
+          step: {
+            index: event.currentStep ?? 0,
+            total: event.totalSteps ?? 0,
+            description: event.description,
+            status: event.status === "running" ? "running" : event.status === "completed" ? "passed" : event.status,
+          },
+        });
       },
     });
 
-    // Normalize return shape: executor returns { results, overallStatus, totalDuration }
-    const elementResults = result.results ?? result.elementResults ?? [];
-    const status = result.overallStatus ?? result.status ?? "error";
-    const durationMs = result.totalDuration ?? result.durationMs ?? 0;
+    // Normalize return shape
+    const elementResults = result.results ?? (result as any).elementResults ?? [];
+    const overallStatus = result.overallStatus ?? (result as any).status ?? "passed";
+    const durationMs = result.totalDuration ?? (result as any).durationMs ?? 0;
 
-    console.log(`✅ ${site.name}: ${status} (${durationMs}ms, ${elementResults.length} elements tested)`);
+    // Determine final status
+    const passedCount = elementResults.filter((e: any) => e.status === "passed" || e.status === "warning").length;
+    const failedCount = elementResults.filter((e: any) => e.status === "failed").length;
+    const finalStatus = failedCount > 0 ? "failed" : "passed";
+
+    // Update run with final results
+    await prisma.run.update({
+      where: { id: run.id },
+      data: {
+        status: finalStatus,
+        totalSteps: elementResults.length,
+        passedSteps: passedCount,
+        failedSteps: failedCount,
+        durationMs,
+        finishedAt: new Date(),
+      },
+    });
+
+    // Broadcast completion so live view redirects to report
+    broadcast(run.id, { type: "run-complete", status: finalStatus });
+
+    console.log(`✅ ${site.name}: ${finalStatus} (${durationMs}ms, ${elementResults.length} elements tested)`);
 
     // Update site last run time
     await prisma.site.update({
@@ -107,7 +146,7 @@ async function runJourney(site: any, journey: any) {
         "failed",
         failedSteps as any
       );
-    } else if (status === "error") {
+    } else if (overallStatus === "error") {
       await processRunResult(
         run.id,
         site.id,
@@ -125,6 +164,10 @@ async function runJourney(site: any, journey: any) {
         [] as any
       );
     }
+
+    // Store a score snapshot after every completed run
+    await storeSiteScore(site.id);
+
   } catch (error: any) {
     await prisma.run.update({
       where: { id: run.id },
@@ -134,6 +177,7 @@ async function runJourney(site: any, journey: any) {
         finishedAt: new Date(),
       },
     });
+    broadcast(run.id, { type: "run-complete", status: "error" });
     console.error(`❌ ${site.name}: ${error.message}`);
   }
 }

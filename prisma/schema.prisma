@@ -9,25 +9,129 @@ generator client {
 }
 
 // ============================================
+// USER — Platform users with role-based access
+// ============================================
+model User {
+  id              String    @id @default(cuid())
+  email           String    @unique
+  passwordHash    String
+  role            String    @default("developer") // governor | developer
+  name            String?
+  nameAr          String?
+  isEmailVerified Boolean   @default(false)
+  failedAttempts  Int       @default(0)
+  lockedUntil     DateTime?
+  slackWebhook    String?   // personal Slack webhook for alerts
+  notifyEmail     Boolean   @default(true)
+  notifySlack     Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  sessions          Session[]
+  passwordResets    PasswordReset[]
+  notifications     Notification[]
+  scheduledReports  ScheduledReport[]
+  directives        Directive[]
+}
+
+// ============================================
+// SESSION — Auth session tokens
+// ============================================
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ============================================
+// PASSWORD RESET — Time-limited reset tokens
+// ============================================
+model PasswordReset {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ============================================
+// NOTIFICATION — In-platform notification log
+// ============================================
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  body      String
+  type      String   @default("info") // incident | recovery | report | system | info
+  read      Boolean  @default(false)
+  metadata  String?  // JSON: extra context (siteId, runId, incidentId)
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ============================================
+// ESCALATION TIMER — Persistent escalation state
+// ============================================
+model EscalationTimer {
+  id            String    @id @default(cuid())
+  incidentId    String    @unique
+  currentLevel  Int       @default(1)  // 1=team_lead, 2=manager, 3=cto
+  level1SentAt  DateTime?
+  level2SentAt  DateTime?
+  level3SentAt  DateTime?
+  resolvedAt    DateTime?
+  createdAt     DateTime  @default(now())
+
+  incident      Incident  @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+}
+
+// ============================================
+// SCHEDULED REPORT — Weekly report config
+// ============================================
+model ScheduledReport {
+  id         String    @id @default(cuid())
+  userId     String
+  toEmail    String
+  dayOfWeek  Int       @default(1)  // 0=Sun … 6=Sat
+  hourOfDay  Int       @default(8)  // 0–23
+  isActive   Boolean   @default(true)
+  lastSentAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ============================================
 // SITE — A government website being monitored
 // ============================================
 model Site {
-  id          String    @id @default(cuid())
-  name        String                          // "Absher"
-  nameAr      String?                         // "أبشر"
-  baseUrl     String                          // "https://www.absher.sa"
-  description String?                         // Brief description
-  schedule    Int       @default(10)          // Run interval in minutes (0 = manual only)
-  isPreset    Boolean   @default(false)       // Seed data site
-  isActive    Boolean   @default(true)        // Monitoring enabled
-  status      String    @default("unknown")   // unknown | healthy | degraded | down
-  lastRunAt   DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id           String    @id @default(cuid())
+  name         String
+  nameAr       String?
+  ministryName String?                         // Ministry this site belongs to
+  baseUrl      String
+  description  String?
+  schedule     Int       @default(10)
+  isPreset     Boolean   @default(false)
+  isActive     Boolean   @default(true)
+  status       String    @default("unknown")   // unknown | healthy | degraded | down
+  lastRunAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   journeys    Journey[]
   runs        Run[]
   incidents   Incident[]
+  scores      SiteScore[]
+  directives  Directive[]
 }
 
 // ============================================
@@ -36,10 +140,10 @@ model Site {
 model Journey {
   id          String   @id @default(cuid())
   siteId      String
-  name        String                          // "Homepage Smoke Test"
+  name        String
   type        String   @default("smoke")      // smoke | navigation | search | form | custom
-  stepsJson   String                          // JSON array of TestStep objects
-  isDefault   Boolean  @default(false)        // Auto-generated default journey
+  stepsJson   String
+  isDefault   Boolean  @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -60,19 +164,19 @@ model Run {
   totalSteps          Int       @default(0)
   passedSteps         Int       @default(0)
   failedSteps         Int       @default(0)
-  summaryJson         String?                         // AI-generated summary
-  errorJson           String?                         // Top-level error if run crashed
+  summaryJson         String?
+  errorJson           String?
   triggeredBy         String    @default("scheduler") // scheduler | manual | api
-  aiPageUnderstanding String?                         // JSON: AI's understanding of the page
-  aiTestPlan          String?                         // JSON: The test plan AI generated
-  aiSummary           String?                         // AI's final summary (detailed version)
+  aiPageUnderstanding String?
+  aiTestPlan          String?
+  aiSummary           String?
   startedAt           DateTime  @default(now())
   finishedAt          DateTime?
 
-  site        Site      @relation(fields: [siteId], references: [id], onDelete: Cascade)
-  journey     Journey   @relation(fields: [journeyId], references: [id], onDelete: Cascade)
-  steps       RunStep[]
-  artifacts   Artifact[]
+  site           Site      @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  journey        Journey   @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  steps          RunStep[]
+  artifacts      Artifact[]
   elementResults ElementTestResult[]
 }
 
@@ -82,17 +186,17 @@ model Run {
 model RunStep {
   id             String  @id @default(cuid())
   runId          String
-  stepIndex      Int                          // 0-based order
-  action         String                       // navigate | click | type | assert_title | assert_element | screenshot | detect_search | detect_forms | discover_links
-  description    String                       // Human-readable: "Open homepage"
-  selector       String?                      // CSS selector if applicable
-  value          String?                      // Input value if applicable
-  url            String?                      // Target URL if applicable
+  stepIndex      Int
+  action         String
+  description    String
+  selector       String?
+  value          String?
+  url            String?
   status         String  @default("pending")  // pending | running | passed | failed | skipped
   durationMs     Int?
   screenshotPath String?
-  error          String?                      // Error message if failed
-  metadata       String?                      // JSON: extra data (found links, form fields, etc.)
+  error          String?
+  metadata       String?
 
   run            Run     @relation(fields: [runId], references: [id], onDelete: Cascade)
 }
@@ -103,8 +207,8 @@ model RunStep {
 model Artifact {
   id        String @id @default(cuid())
   runId     String
-  type      String                            // screenshot | trace | video | console | network | har
-  path      String                            // Relative path: artifacts/{siteId}/{runId}/trace.zip
+  type      String
+  path      String
   sizeBytes Int?
   createdAt DateTime @default(now())
 
@@ -112,33 +216,33 @@ model Artifact {
 }
 
 // ============================================
-// ELEMENT TEST RESULT — Individual element test within a run
+// ELEMENT TEST RESULT
 // ============================================
 model ElementTestResult {
-  id              String   @id @default(cuid())
-  runId           String
-  elementType     String                            // button | link | dropdown | tab | modal-trigger | form-input | toggle | accordion | carousel-control | menu-item
-  elementText     String?                           // visible text (optional)
-  elementTextAr   String?                           // Arabic text if present
-  elementSelector String                            // CSS selector
-  parentSection   String?                           // header | nav | hero | footer | etc.
-  action          String                            // click | hover | type | select | toggle
-  status          String   @default("pending")      // pending | running | passed | failed | skipped | warning
-  responseTimeMs  Int?
-  urlBefore       String?
-  urlAfter        String?
-  urlChanged      Boolean  @default(false)
+  id               String   @id @default(cuid())
+  runId            String
+  elementType      String
+  elementText      String?
+  elementTextAr    String?
+  elementSelector  String
+  parentSection    String?
+  action           String
+  status           String   @default("pending")
+  responseTimeMs   Int?
+  urlBefore        String?
+  urlAfter         String?
+  urlChanged       Boolean  @default(false)
   screenshotBefore String?
   screenshotAfter  String?
-  consoleErrors   String?                           // JSON array
-  networkErrors   String?                           // JSON array
-  domChanges      String?                           // description of what changed
-  error           String?
-  cursorX         Int?                              // cursor position for visualization
-  cursorY         Int?
-  createdAt       DateTime @default(now())
+  consoleErrors    String?
+  networkErrors    String?
+  domChanges       String?
+  error            String?
+  cursorX          Int?
+  cursorY          Int?
+  createdAt        DateTime @default(now())
 
-  run             Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  run              Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
 }
 
 // ============================================
@@ -148,15 +252,53 @@ model Incident {
   id          String    @id @default(cuid())
   siteId      String
   journeyId   String?
-  title       String                          // "Homepage Smoke Test failing"
-  description String?                         // AI-generated incident description
+  title       String
+  description String?
   status      String    @default("open")      // open | investigating | resolved
   severity    String    @default("medium")    // low | medium | high | critical
-  occurrences Int       @default(1)           // Number of consecutive failures
+  occurrences Int       @default(1)
   firstSeenAt DateTime  @default(now())
   lastSeenAt  DateTime  @default(now())
   resolvedAt  DateTime?
 
+  site             Site             @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  journey          Journey?         @relation(fields: [journeyId], references: [id])
+  escalationTimer  EscalationTimer?
+}
+
+// ============================================
+// SITE SCORE — Historical score snapshots per site
+// ============================================
+model SiteScore {
+  id           String   @id @default(cuid())
+  siteId       String
+  computedAt   DateTime @default(now())
+  overallScore Int                          // 0–100
+  grade        String                       // A | B | C | D | F
+  uxScore      Int      @default(50)
+  qaScore      Int      @default(50)
+  accessScore  Int      @default(50)
+  perfScore    Int      @default(50)
+  execSummary  String?                      // AI-generated executive summary
+
+  site         Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+}
+
+// ============================================
+// DIRECTIVE — Governor-issued action directive
+// ============================================
+model Directive {
+  id          String    @id @default(cuid())
+  siteId      String
+  issuedById  String                        // userId of the governor
+  title       String
+  body        String    @default("")
+  status      String    @default("open")   // open | resolved | overdue
+  dueDate     DateTime?
+  resolvedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
   site        Site      @relation(fields: [siteId], references: [id], onDelete: Cascade)
-  journey     Journey?  @relation(fields: [journeyId], references: [id])
+  issuedBy    User      @relation(fields: [issuedById], references: [id])
 }

@@ -123,18 +123,57 @@ function MiniCircle({ score, label }: { score: number; label: string }) {
   );
 }
 
+/** Renders summary text with proper paragraph breaks and highlighted key terms */
+function SummaryText({ text, rtl }: { text: string; rtl?: boolean }) {
+  // Split into paragraphs on double newlines or sentence boundaries after punctuation
+  const paragraphs = text
+    .split(/\n\n+/)
+    .flatMap((p) => p.split(/(?<=[.!؟])\s{2,}/))
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  return (
+    <div className={`space-y-3 ${rtl ? "text-right" : ""}`}>
+      {paragraphs.map((para, i) => (
+        <p
+          key={i}
+          className="text-sm text-white/85 leading-[1.9] tracking-wide font-light"
+          style={{ textIndent: rtl ? undefined : "0" }}
+        >
+          {para}
+        </p>
+      ))}
+    </div>
+  );
+}
+
 function deriveIssues(steps: RunStep[]): Issue[] {
   const issues: Issue[] = [];
   steps.forEach((s, i) => {
     if (s.status === "failed" && s.error) {
-      const cats = ["Accessibility", "UX", "QA", "Performance"];
-      const cat = cats[i % cats.length];
+      // Severity based on actual error content and position
+      let severity: Issue["severity"] = "Medium";
+      const err = s.error.toLowerCase();
+      if (i === 0 || err.includes("navigation") || err.includes("timeout") || err.includes("crash")) {
+        severity = "Critical";
+      } else if (err.includes("not found") || err.includes("blocked") || err.includes("refused") || err.includes("500") || err.includes("404")) {
+        severity = "High";
+      } else if (err.includes("warning") || err.includes("slow") || err.includes("deprecated")) {
+        severity = "Low";
+      }
+
+      // Category based on error type
+      let cat = "QA";
+      if (err.includes("timeout") || err.includes("slow") || err.includes("network")) cat = "Performance";
+      else if (err.includes("aria") || err.includes("label") || err.includes("focus")) cat = "Accessibility";
+      else if (err.includes("navigation") || err.includes("click") || err.includes("not found")) cat = "UX";
+
       issues.push({
         id: `issue-${i}`,
-        severity: i === 0 ? "Critical" : i % 3 === 0 ? "High" : "Low",
+        severity,
         category: cat,
         title: s.description || s.error.slice(0, 60),
-        page: s.url ? new URL(s.url).pathname : "/",
+        page: s.url ? (() => { try { return new URL(s.url!).pathname; } catch { return "/"; } })() : "/",
         description: s.error,
       });
     }
@@ -151,13 +190,17 @@ function derivePages(steps: RunStep[]) {
       seen.add(s.url!);
       return true;
     })
-    .map((s) => ({
-      url: s.url!,
-      path: new URL(s.url!).pathname || "/",
-      name: s.description?.replace(/^(Open|Navigate to|Go to) /i, "").replace(/["'"]/g, "") || new URL(s.url!).pathname || "Homepage",
-      durationMs: s.durationMs,
-      errorCount: 0,
-    }));
+    .map((s) => {
+      let pathname = "/";
+      try { pathname = new URL(s.url!).pathname || "/"; } catch {}
+      return {
+        url: s.url!,
+        path: pathname,
+        name: s.description?.replace(/^(Open|Navigate to|Go to) /i, "").replace(/["'"]/g, "") || pathname || "Homepage",
+        durationMs: s.durationMs,
+        errorCount: steps.filter(st => st.url === s.url && st.status === "failed").length,
+      };
+    });
 }
 
 export default function ReportPage() {
@@ -206,9 +249,10 @@ export default function ReportPage() {
   } catch {}
 
   const overallScore = run.totalSteps > 0 ? Math.round((run.passedSteps / run.totalSteps) * 100) : 0;
-  const funcScore = Math.max(0, overallScore - 2);
-  const easeScore = Math.min(100, overallScore + 3);
-  const coverageScore = Math.max(0, overallScore - 9);
+  // Sub-scores derived from real data — no arbitrary adjustments
+  const funcScore = overallScore; // Functionality = % steps passed
+  const easeScore = run.totalSteps > 0 ? Math.round(((run.totalSteps - run.failedSteps) / run.totalSteps) * 100) : 0; // Ease = non-failing steps
+  const coverageScore = run.totalSteps > 0 ? Math.min(100, Math.round((run.totalSteps / Math.max(run.totalSteps, 10)) * 100)) : 0; // Coverage = breadth of test
   const grade = overallScore >= 90 ? "A" : overallScore >= 80 ? "B+" : overallScore >= 70 ? "B" : overallScore >= 60 ? "C" : "D";
 
   const issues = deriveIssues(run.steps);
@@ -272,61 +316,63 @@ export default function ReportPage() {
 
       {/* AI Summary */}
       {summary && (
-        <div className="relative rounded-xl overflow-hidden border border-emerald-900/40">
-          {/* Subtle gradient header bar */}
-          <div className="bg-gradient-to-r from-emerald-950/80 via-[hsl(var(--card))] to-[hsl(var(--card))] px-6 py-4 flex items-center gap-3 border-b border-emerald-900/30">
-            <div className="flex items-center justify-center w-7 h-7 rounded-lg bg-emerald-900/60 border border-emerald-700/40">
-              <Star className="w-3.5 h-3.5 text-emerald-400" />
+        <div className="relative rounded-2xl overflow-hidden border border-emerald-900/50 shadow-lg shadow-emerald-950/20">
+          {/* Header */}
+          <div className="bg-gradient-to-r from-emerald-950 to-[hsl(var(--card))] px-6 py-4 flex items-center justify-between border-b border-emerald-900/40">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center justify-center w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/30">
+                <Star className="w-4 h-4 text-emerald-400" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-white">AI Executive Summary</p>
+                <p className="text-[11px] text-emerald-500/80 mt-0.5">Generated by Claude · Powered by Rassd</p>
+              </div>
             </div>
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400">AI Summary</p>
-              <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-0.5">Generated by Claude · Powered by Rasd</p>
+            <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-900/40 border border-emerald-800/40">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="text-[11px] text-emerald-400 font-medium">AI Analysis</span>
             </div>
           </div>
 
           {/* Body */}
-          <div className="bg-[hsl(var(--card))] px-6 py-5 space-y-0">
-
-            {/* Arabic block */}
-            {summary.executiveAr && (
-              <div className="rounded-lg bg-white/[0.03] border border-white/[0.06] px-5 py-4" dir="rtl">
-                <p className="text-[10px] font-semibold uppercase tracking-widest text-emerald-500 mb-3 text-right">
-                  الملخص التنفيذي
-                </p>
-                <p className="text-base text-white leading-8 text-right font-light tracking-wide">
-                  {summary.executiveAr}
-                </p>
-              </div>
-            )}
-
-            {/* Divider */}
-            {summary.executiveAr && summary.executive && (
-              <div className="h-px bg-[hsl(var(--border))] my-5" />
-            )}
+          <div className="bg-[hsl(var(--card))] divide-y divide-white/[0.06]">
 
             {/* English block */}
             {summary.executive && (
-              <div className="rounded-lg bg-white/[0.03] border border-white/[0.06] px-5 py-4">
-                <p className="text-[10px] font-semibold uppercase tracking-widest text-emerald-500 mb-3">
+              <div className="px-6 py-5">
+                <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-emerald-500 mb-4 flex items-center gap-2">
+                  <span className="w-3 h-px bg-emerald-500" />
                   Executive Summary
                 </p>
-                <p className="text-base text-white leading-8 font-light tracking-wide">
-                  {summary.executive}
+                <SummaryText text={summary.executive} />
+              </div>
+            )}
+
+            {/* Arabic block */}
+            {summary.executiveAr && (
+              <div className="px-6 py-5" dir="rtl">
+                <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-emerald-500 mb-4 flex items-center gap-2 justify-end">
+                  الملخص التنفيذي
+                  <span className="w-3 h-px bg-emerald-500" />
                 </p>
+                <SummaryText text={summary.executiveAr} rtl />
               </div>
             )}
 
             {/* Recommendations */}
             {summary.recommendations && summary.recommendations.length > 0 && (
-              <div className="mt-5 pt-5 border-t border-[hsl(var(--border))]">
-                <p className="text-[11px] font-semibold uppercase tracking-widest text-[hsl(var(--muted-foreground))] mb-3">
+              <div className="px-6 py-5">
+                <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-[hsl(var(--muted-foreground))] mb-4 flex items-center gap-2">
+                  <span className="w-3 h-px bg-[hsl(var(--muted-foreground))]" />
                   Recommendations
                 </p>
-                <ul className="space-y-2">
+                <ul className="space-y-3">
                   {summary.recommendations.map((rec, i) => (
-                    <li key={i} className="flex items-start gap-2.5 text-sm text-white/70">
-                      <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
-                      {rec}
+                    <li key={i} className="flex items-start gap-3">
+                      <span className="mt-1 flex-shrink-0 w-5 h-5 rounded-full bg-emerald-900/50 border border-emerald-700/40 flex items-center justify-center text-[10px] font-bold text-emerald-400">
+                        {i + 1}
+                      </span>
+                      <span className="text-sm text-white/80 leading-relaxed">{rec}</span>
                     </li>
                   ))}
                 </ul>

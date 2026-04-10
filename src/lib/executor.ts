@@ -26,6 +26,23 @@ interface StepResult {
   metadata?: any;
 }
 
+// ── Human-like helpers ────────────────────────────────────────────────────────
+
+/** Random integer between min and max (inclusive) */
+function rand(min: number, max: number): number {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+/** Pause for a random duration — simulates human think time */
+async function humanDelay(min = 300, max = 900): Promise<void> {
+  await new Promise((r) => setTimeout(r, rand(min, max)));
+}
+
+/** Ease-in-out interpolation for smooth mouse movement */
+function easeInOut(t: number): number {
+  return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+}
+
 export class PlaywrightExecutor {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
@@ -39,6 +56,70 @@ export class PlaywrightExecutor {
     timing: number;
     size: number;
   }> = [];
+
+  /** Move mouse smoothly from current position to target using curved path */
+  private async smoothMouseMove(targetX: number, targetY: number): Promise<void> {
+    if (!this.page) return;
+    const steps = rand(18, 30);
+    const mouse = this.page.mouse;
+
+    // Get current mouse position via CDP (approximate with last known)
+    const startX = rand(100, 900);
+    const startY = rand(100, 500);
+
+    // Add a slight curve via a control point
+    const cpX = (startX + targetX) / 2 + rand(-80, 80);
+    const cpY = (startY + targetY) / 2 + rand(-60, 60);
+
+    for (let i = 1; i <= steps; i++) {
+      const t = easeInOut(i / steps);
+      // Quadratic bezier
+      const x = (1 - t) * (1 - t) * startX + 2 * (1 - t) * t * cpX + t * t * targetX;
+      const y = (1 - t) * (1 - t) * startY + 2 * (1 - t) * t * cpY + t * t * targetY;
+      await mouse.move(Math.round(x), Math.round(y));
+      await new Promise((r) => setTimeout(r, rand(8, 22)));
+    }
+  }
+
+  /** Type text character by character with natural rhythm */
+  private async humanType(selector: string, text: string): Promise<void> {
+    if (!this.page) return;
+    await this.page.click(selector);
+    await humanDelay(120, 250);
+    for (const char of text) {
+      await this.page.keyboard.type(char);
+      // Occasional longer pause as if thinking
+      await new Promise((r) => setTimeout(r, rand(60, Math.random() > 0.9 ? 320 : 160)));
+    }
+  }
+
+  /** Scroll the page naturally as a human would before reading */
+  private async naturalScroll(direction: "down" | "up" = "down", amount?: number): Promise<void> {
+    if (!this.page) return;
+    const dist = amount ?? rand(200, 500);
+    const steps = rand(4, 8);
+    for (let i = 0; i < steps; i++) {
+      await this.page.mouse.wheel(0, direction === "down" ? dist / steps : -(dist / steps));
+      await new Promise((r) => setTimeout(r, rand(40, 100)));
+    }
+  }
+
+  /** Scroll element into view then move mouse smoothly over it */
+  private async humanFocusElement(selector: string): Promise<void> {
+    if (!this.page) return;
+    const el = await this.page.$(selector);
+    if (!el) return;
+    await el.scrollIntoViewIfNeeded();
+    await humanDelay(100, 300);
+    const box = await el.boundingBox();
+    if (box) {
+      // Target slightly random point within the element
+      const tx = box.x + box.width * rand(20, 80) / 100;
+      const ty = box.y + box.height * rand(20, 80) / 100;
+      await this.smoothMouseMove(Math.round(tx), Math.round(ty));
+    }
+    await humanDelay(80, 200);
+  }
 
   async execute(config: ExecutorConfig): Promise<{
     steps: StepResult[];
@@ -223,16 +304,23 @@ export class PlaywrightExecutor {
           if (step.url && !this.isSameDomain(config.baseUrl, step.url)) {
             throw new Error(`Navigation blocked: ${step.url} is outside target domain`);
           }
+          // Human-like: small pause before navigating (like clicking address bar)
+          await humanDelay(400, 900);
           await this.page!.goto(step.url || config.baseUrl, {
-            timeout: 10000,
+            timeout: 30000,
             waitUntil: "domcontentloaded",
           });
+          // Human-like: pause after page loads to "read" it
+          await humanDelay(600, 1400);
+          // Occasionally scroll down a bit as if scanning the page
+          if (Math.random() > 0.5) await this.naturalScroll("down", rand(150, 400));
+          await humanDelay(300, 700);
           break;
         }
 
         case "click": {
           if (!step.selector) throw new Error("Click step requires a selector");
-          await this.page!.waitForSelector(step.selector, { timeout: 5000 });
+          await this.page!.waitForSelector(step.selector, { timeout: 10000 });
           // SAFETY: Verify the link is same-domain before clicking
           const href = await this.page!.$eval(step.selector, (el) =>
             el instanceof HTMLAnchorElement ? el.href : null
@@ -240,15 +328,22 @@ export class PlaywrightExecutor {
           if (href && !this.isSameDomain(config.baseUrl, href)) {
             throw new Error(`Click blocked: target ${href} is outside domain`);
           }
-          await this.page!.click(step.selector, { timeout: 5000 });
-          await this.page!.waitForLoadState("domcontentloaded", { timeout: 8000 }).catch(() => {});
+          // Human-like: scroll element into view, move mouse smoothly, then click
+          await this.humanFocusElement(step.selector);
+          await humanDelay(100, 300);
+          await this.page!.click(step.selector, { delay: rand(40, 120) });
+          await this.page!.waitForLoadState("domcontentloaded", { timeout: 15000 }).catch(() => {});
+          await humanDelay(400, 900);
           break;
         }
 
         case "type": {
           if (!step.selector || !step.value) throw new Error("Type step requires selector and value");
-          await this.page!.waitForSelector(step.selector, { timeout: 5000 });
-          await this.page!.fill(step.selector, step.value);
+          await this.page!.waitForSelector(step.selector, { timeout: 10000 });
+          // Human-like: move to field, click, then type with natural rhythm
+          await this.humanFocusElement(step.selector);
+          await this.humanType(step.selector, step.value);
+          await humanDelay(200, 500);
           break;
         }
 
@@ -394,8 +489,8 @@ export class PlaywrightExecutor {
               },
             });
 
-            // Wait a bit between element tests to avoid overwhelming the site
-            await this.page!.waitForTimeout(800);
+            // Human-like pause between elements — natural variation
+            await humanDelay(500, 1400);
           }
 
           return {
@@ -506,6 +601,8 @@ export class PlaywrightExecutor {
     const cursorY = Math.round(element.boundingBox.y + element.boundingBox.height / 2);
 
     if (action === 'move') {
+      // Smooth real mouse movement before broadcasting position
+      await this.smoothMouseMove(cursorX, cursorY);
       broadcast(runId, {
         type: 'cursor_move',
         data: {
@@ -517,9 +614,7 @@ export class PlaywrightExecutor {
           timestamp: Date.now(),
         },
       });
-
-      // Wait for cursor animation to complete
-      await new Promise(resolve => setTimeout(resolve, 600));
+      await humanDelay(200, 500);
     } else if (action === 'click') {
       broadcast(runId, {
         type: 'cursor_click',
@@ -530,9 +625,7 @@ export class PlaywrightExecutor {
           timestamp: Date.now(),
         },
       });
-
-      // Wait for click animation
-      await new Promise(resolve => setTimeout(resolve, 300));
+      await humanDelay(150, 350);
     }
   }
 }

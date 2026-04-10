@@ -201,6 +201,24 @@ async function executeRun(
 
     console.log(`[AI EXECUTOR] Test completed with status: ${result.overallStatus}`);
 
+    // ── Save final run stats to DB ──
+    // "warning" = element worked but had minor issues → counts as passed
+    const passedCount = result.results.filter((e) => e.status === "passed" || e.status === "warning").length;
+    const failedCount = result.results.filter((e) => e.status === "failed").length;
+    const finalStatus = failedCount > 0 ? "failed" : "passed";
+
+    await prisma.run.update({
+      where: { id: runId },
+      data: {
+        status: finalStatus,
+        totalSteps: result.results.length,
+        passedSteps: passedCount,
+        failedSteps: failedCount,
+        durationMs: result.totalDuration,
+        finishedAt: new Date(),
+      },
+    });
+
     await prisma.site.update({ where: { id: siteId }, data: { lastRunAt: new Date() } });
 
     const failedElements = result.results.filter((e) => e.status === "failed");
