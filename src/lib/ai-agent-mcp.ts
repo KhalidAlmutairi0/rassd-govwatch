@@ -135,7 +135,7 @@ export async function runMCPAgent(
             thought: "Testing complete",
             toolName,
             toolInput,
-            toolResult: { success: true, summary: toolInput.summary },
+            toolResult: { success: true, summary: (toolInput as any).summary },
             timestamp: Date.now(),
           });
           toolResults.push({
