@@ -1,9 +1,6 @@
 // src/app/api/sites/[id]/runs/route.ts
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { PlaywrightExecutor } from "@/lib/executor";
-import { processRunResult } from "@/lib/incidents";
-import { generateRunSummary } from "@/lib/ai-summary";
 
 // GET /api/sites/[id]/runs - List runs for a site
 export async function GET(
@@ -61,7 +58,22 @@ export async function POST(
     }
 
     if (!journey) {
-      return NextResponse.json({ error: "No journey found" }, { status: 404 });
+      // Auto-create a basic smoke test journey for this site
+      const defaultSteps = [
+        { action: "navigate", description: "Open homepage", url: site.baseUrl, assertions: ["page_loaded", "title_exists"] },
+        { action: "screenshot", description: "Capture homepage" },
+        { action: "assert_element", description: "Verify page has main heading", selector: "h1, h2, [role='heading']" },
+        { action: "screenshot", description: "Capture after heading check" },
+      ];
+      journey = await prisma.journey.create({
+        data: {
+          siteId: params.id,
+          name: `${site.name} Smoke Test`,
+          type: "smoke",
+          stepsJson: JSON.stringify(defaultSteps),
+          isDefault: true,
+        },
+      });
     }
 
     // Create run record (keep as "queued" - execution starts when client connects)
@@ -94,69 +106,3 @@ export async function POST(
   }
 }
 
-// Export for use by other routes
-export async function executeRun(
-  runId: string,
-  siteId: string,
-  baseUrl: string,
-  journeyId: string,
-  stepsJson: string
-) {
-  try {
-    const steps = JSON.parse(stepsJson);
-    const executor = new PlaywrightExecutor();
-
-    const result = await executor.execute({
-      runId,
-      siteId,
-      baseUrl,
-      steps,
-      enableScreencast: true,
-      enableTrace: true,
-      enableVideo: false,
-    });
-
-    // Generate AI summary
-    const site = await prisma.site.findUnique({ where: { id: siteId } });
-    const summary = await generateRunSummary(
-      baseUrl,
-      site?.name || "Unknown Site",
-      result.overallStatus,
-      result.steps,
-      result.durationMs
-    );
-
-    // Update run with results
-    await prisma.run.update({
-      where: { id: runId },
-      data: {
-        status: result.overallStatus,
-        durationMs: result.durationMs,
-        totalSteps: result.steps.length,
-        passedSteps: result.steps.filter((s) => s.status === "passed").length,
-        failedSteps: result.steps.filter((s) => s.status === "failed").length,
-        summaryJson: JSON.stringify(summary),
-        finishedAt: new Date(),
-      },
-    });
-
-    // Update site lastRunAt
-    await prisma.site.update({
-      where: { id: siteId },
-      data: { lastRunAt: new Date() },
-    });
-
-    // Process incidents
-    await processRunResult(runId, siteId, journeyId, result.overallStatus, result.steps);
-  } catch (error) {
-    console.error(`Error executing run ${runId}:`, error);
-    await prisma.run.update({
-      where: { id: runId },
-      data: {
-        status: "error",
-        errorJson: JSON.stringify({ message: (error as Error).message }),
-        finishedAt: new Date(),
-      },
-    });
-  }
-}

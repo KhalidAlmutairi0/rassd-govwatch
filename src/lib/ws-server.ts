@@ -6,7 +6,7 @@ interface LiveSession {
   clients: Set<WebSocket>;
 }
 
-// Use global to share sessions across Next.js serverless functions
+// Use global to share sessions and server instance across Next.js hot reloads
 const sessions = (global as any).__wsSessions || ((global as any).__wsSessions = new Map<string, LiveSession>());
 let wss: WebSocketServer | null = (global as any).__wsServer || null;
 
@@ -17,6 +17,16 @@ export function initWebSocketServer(port: number = 3001) {
   }
 
   wss = new WebSocketServer({ port });
+  (global as any).__wsServer = wss; // persist across hot reloads
+
+  // Handle port-in-use gracefully (happens in Next.js dev with multiple processes)
+  wss.on("error", (err: any) => {
+    if (err.code === "EADDRINUSE") {
+      console.log(`[WS] Port ${port} already in use — another process has the WS server`);
+    } else {
+      console.error("[WS] Server error:", err);
+    }
+  });
 
   wss.on("connection", (ws, req) => {
     const url = new URL(req.url!, `http://localhost:${port}`);

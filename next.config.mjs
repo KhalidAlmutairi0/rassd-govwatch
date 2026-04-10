@@ -1,5 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  experimental: {
+    instrumentationHook: true,
+  },
   webpack: (config) => {
     // Fix for ws module in Next.js
     config.externals.push({
