@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Eye, EyeOff, Lock, Mail, AlertTriangle, Clock } from "lucide-react";
 
@@ -12,7 +12,7 @@ function formatTimeRemaining(lockedUntil: string): string {
   return `${mins}:${secs.toString().padStart(2, "0")}`;
 }
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
@@ -209,5 +209,13 @@ export default function LoginPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="w-full max-w-sm mx-auto" />}>
+      <LoginForm />
+    </Suspense>
   );
 }
