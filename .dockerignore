@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+artifacts
+prisma/dev.db
+prisma/dev.db-journal
+*.log
+*.png
+*.webm
+*.mp4
+.env
+.env.local
