@@ -11,7 +11,6 @@ export default function GovAddSitePage() {
   const router = useRouter();
   const [url, setUrl] = useState("");
   const [name, setName] = useState("");
-  const [schedule, setSchedule] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -26,7 +25,7 @@ export default function GovAddSitePage() {
         body: JSON.stringify({
           name: name || new URL(url).hostname.replace("www.", ""),
           baseUrl: url,
-          schedule: schedule ? 10 : 0,
+          schedule: 10, // always enable automatic monitoring; developer can change from their view
           skipRun: !runNow,
         }),
       });
@@ -71,22 +70,6 @@ export default function GovAddSitePage() {
             </label>
             <input type="url" value={url} onChange={(e) => setUrl(e.target.value)}
               placeholder="https://example.gov.sa" className={INPUT} />
-          </div>
-
-          {/* Schedule toggle */}
-          <div className="flex items-center justify-between py-1">
-            <div>
-              <p className="text-sm font-medium text-white">Enable Automatic Monitoring</p>
-              <p className="text-xs text-[hsl(var(--muted-foreground))] mt-0.5">
-                {schedule ? "Scans every 10 minutes automatically" : "Manual scans only"}
-              </p>
-            </div>
-            <button
-              onClick={() => setSchedule(!schedule)}
-              className={`relative w-10 h-6 rounded-full transition-colors shrink-0 ${schedule ? "bg-[#1B4332]" : "bg-white/20"}`}
-            >
-              <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${schedule ? "translate-x-[18px]" : "translate-x-0.5"}`} />
-            </button>
           </div>
 
           {error && (

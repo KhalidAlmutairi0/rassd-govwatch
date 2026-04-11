@@ -120,13 +120,13 @@ function SiteCard({ site, onScheduleToggle, onRunNow }: {
         <button
           onClick={handleToggleSchedule}
           disabled={schedLoading}
-          className={`relative w-10 h-5 rounded-full transition-colors shrink-0 disabled:opacity-50 ${
+          className={`relative w-10 h-5 rounded-full transition-colors shrink-0 disabled:opacity-50 overflow-hidden ${
             isScheduled ? "bg-emerald-600" : "bg-white/20"
           }`}
           title={isScheduled ? "Disable scheduled scans" : "Enable scheduled scans (every 10 min)"}
         >
           <span
-            className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${
+            className={`absolute top-0.5 left-0 w-4 h-4 bg-white rounded-full shadow transition-transform ${
               isScheduled ? "translate-x-[22px]" : "translate-x-0.5"
             }`}
           />

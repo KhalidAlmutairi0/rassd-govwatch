@@ -62,11 +62,20 @@ export async function computeSiteScores(siteId: string): Promise<SubScores> {
     orderBy: { startedAt: "desc" },
     take: 10,
     select: {
+      id: true,
       status: true,
       durationMs: true,
       totalSteps: true,
       passedSteps: true,
       failedSteps: true,
+      steps: {
+        select: {
+          action: true,
+          status: true,
+          durationMs: true,
+          error: true,
+        },
+      },
     },
   });
 
@@ -74,39 +83,91 @@ export async function computeSiteScores(siteId: string): Promise<SubScores> {
     return { qa: 50, performance: 50, accessibility: 50, ux: 50, overall: 50, grade: "F" };
   }
 
-  // ── QA score: weighted step pass rate (penalise errors heavily) ──────────
-  const totalSteps = runs.reduce((s, r) => s + (r.totalSteps || 0), 0);
-  const passedSteps = runs.reduce((s, r) => s + (r.passedSteps || 0), 0);
-  const qaScore = totalSteps > 0 ? Math.round((passedSteps / totalSteps) * 100) : 50;
+  const clamp = (v: number) => Math.min(100, Math.max(0, v));
+  const allSteps = runs.flatMap((r) => r.steps);
 
-  // ── Performance score: based on avg run duration ──────────────────────────
-  const durations = runs.filter((r) => r.durationMs && r.durationMs > 0).map((r) => r.durationMs!);
-  let perfScore = 65;
-  if (durations.length > 0) {
-    const avg = durations.reduce((s, d) => s + d, 0) / durations.length;
-    if (avg < 5_000) perfScore = 95;
-    else if (avg < 10_000) perfScore = 85;
-    else if (avg < 20_000) perfScore = 70;
-    else if (avg < 40_000) perfScore = 55;
-    else perfScore = 35;
+  // ── QA score: step-level weighted pass rate ───────────────────────────────
+  // Navigation and assertion failures count double — they represent real user impact.
+  let weightedPassed = 0;
+  let weightedTotal = 0;
+  for (const step of allSteps) {
+    if (step.status === "skipped") continue; // skipped steps don't affect score
+    const isCritical = ["navigate", "assert_element", "assert_title", "click", "type"].includes(step.action);
+    const weight = isCritical ? 2 : 1;
+    weightedTotal += weight;
+    if (step.status === "passed") weightedPassed += weight;
   }
 
-  // ── Accessibility score: pass-rate derived (no WCAG scanner yet) ──────────
-  const passedRuns = runs.filter((r) => r.status === "passed").length;
-  const accessScore = Math.round((passedRuns / runs.length) * 75 + 15); // 15–90 range
+  // Extra penalty when homepage (first navigate step) failed — citizens can't access the site
+  const homepageFailCount = runs.filter((r) => {
+    const first = r.steps[0];
+    return first && first.action === "navigate" && first.status === "failed";
+  }).length;
 
-  // ── UX score: blend of QA and perf, slightly discounted ───────────────────
-  const uxScore = Math.round(qaScore * 0.55 + perfScore * 0.45);
+  const rawQa = weightedTotal > 0 ? (weightedPassed / weightedTotal) * 100 : 50;
+  const qaScore = Math.round(clamp(rawQa - homepageFailCount * 6));
 
-  // ── Overall: weighted average ─────────────────────────────────────────────
-  const overall = Math.round(
-    qaScore * 0.35 +
+  // ── Performance score: per-page load times from navigate steps ────────────
+  // More accurate than total run duration (which includes Playwright overhead).
+  const navDurations = allSteps
+    .filter((s) => s.action === "navigate" && s.status === "passed" && s.durationMs && s.durationMs > 500)
+    .map((s) => s.durationMs!)
+    .sort((a, b) => a - b);
+
+  let perfScore = 65;
+  if (navDurations.length > 0) {
+    const avg = navDurations.reduce((s, d) => s + d, 0) / navDurations.length;
+    const p90 = navDurations[Math.floor(navDurations.length * 0.9)] ?? avg;
+    if (avg < 2_000 && p90 < 4_000) perfScore = 95;
+    else if (avg < 4_000 && p90 < 8_000) perfScore = 85;
+    else if (avg < 8_000 && p90 < 15_000) perfScore = 70;
+    else if (avg < 15_000 && p90 < 30_000) perfScore = 50;
+    else perfScore = 30;
+  } else {
+    // Fall back to total run duration if no navigate step durations
+    const runDurations = runs.filter((r) => r.durationMs && r.durationMs > 0).map((r) => r.durationMs!);
+    if (runDurations.length > 0) {
+      const avg = runDurations.reduce((s, d) => s + d, 0) / runDurations.length;
+      if (avg < 10_000) perfScore = 85;
+      else if (avg < 20_000) perfScore = 70;
+      else if (avg < 40_000) perfScore = 52;
+      else perfScore = 32;
+    }
+  }
+
+  // ── Accessibility score: navigation reachability + assertion coverage ─────
+  // Measures whether key pages are consistently reachable and content is verifiable.
+  const navSteps = allSteps.filter((s) => s.action === "navigate");
+  const navPassRate = navSteps.length > 0
+    ? navSteps.filter((s) => s.status === "passed").length / navSteps.length
+    : 1;
+
+  const assertSteps = allSteps.filter((s) => ["assert_element", "assert_title"].includes(s.action));
+  const assertPassRate = assertSteps.length > 0
+    ? assertSteps.filter((s) => s.status === "passed").length / assertSteps.length
+    : 0.5;
+
+  // Timeouts mean pages are unresponsive — a serious accessibility barrier
+  const timeoutCount = allSteps.filter((s) => s.error?.toLowerCase().includes("timeout")).length;
+  const timeoutPenalty = Math.min(timeoutCount * 4, 25);
+
+  const accessScore = Math.round(clamp(
+    navPassRate * 50 + assertPassRate * 35 + 15 - timeoutPenalty
+  ));
+
+  // ── UX score: blend reflecting real user experience ───────────────────────
+  const errorRunPct = runs.filter((r) => r.status === "error").length / runs.length;
+  const uxScore = Math.round(clamp(
+    qaScore * 0.50 + perfScore * 0.40 + accessScore * 0.10 - errorRunPct * 15
+  ));
+
+  // ── Overall: weighted across all four dimensions ──────────────────────────
+  const overall = Math.round(clamp(
+    qaScore * 0.40 +
     perfScore * 0.25 +
-    accessScore * 0.25 +
+    accessScore * 0.20 +
     uxScore * 0.15
-  );
-
-  const clamp = (v: number) => Math.min(100, Math.max(0, v));
+  ));
 
   return {
     qa: clamp(qaScore),

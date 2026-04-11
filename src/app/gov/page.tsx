@@ -198,7 +198,7 @@ const KB_VARIANTS = [
   { from: "scale-105 -translate-x-1 translate-y-1",   to: "scale-100 translate-x-0 translate-y-0"   },
 ];
 
-function ScreenshotCarousel({ siteId }: { siteId: string; runId: string | null; stepCount: number }) {
+function ScreenshotCarousel({ siteId, isRunning, hasRuns }: { siteId: string; runId: string | null; stepCount: number; isRunning: boolean; hasRuns: boolean }) {
   const [frames, setFrames]   = useState<string[]>([]);
   const [cur, setCur]         = useState(0);       // index of current frame
   const [next, setNext]       = useState<number | null>(null); // index fading in
@@ -281,8 +281,25 @@ function ScreenshotCarousel({ siteId }: { siteId: string; runId: string | null; 
             onError={() => setFrames((prev) => prev.filter((_, i) => i !== next))}
           />
         )}
-      </>) : (
-        /* Scanning skeleton — shown when no screenshots yet */
+      </>) : isRunning ? (
+        /* Test currently running — scanning animation */
+        <div className="absolute inset-0 flex flex-col justify-center gap-2.5 px-6 bg-[#050505]">
+          {[3/4, 1, 5/6, 2/3, 4/5].map((w, i) => (
+            <div key={i} className="h-2 bg-blue-500/20 rounded-sm animate-pulse" style={{ width: `${w * 100}%`, animationDelay: `${i * 120}ms` }} />
+          ))}
+        </div>
+      ) : !hasRuns ? (
+        /* No tests have ever run — empty/prompt state */
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-[#050505]">
+          <div className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center">
+            <svg className="w-4 h-4 text-white/30" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M3 2.5l10 5.5-10 5.5V2.5z" />
+            </svg>
+          </div>
+          <p className="text-[10px] text-white/30 font-medium">No tests run yet</p>
+        </div>
+      ) : (
+        /* Has past runs but screenshots not loaded yet */
         <div className="absolute inset-0 flex flex-col justify-center gap-2.5 px-6 bg-[#050505]">
           {[3/4, 1, 5/6, 2/3, 4/5].map((w, i) => (
             <div key={i} className="h-2 bg-white/[0.06] rounded-sm animate-pulse" style={{ width: `${w * 100}%`, animationDelay: `${i * 120}ms` }} />
@@ -290,14 +307,16 @@ function ScreenshotCarousel({ siteId }: { siteId: string; runId: string | null; 
         </div>
       )}
 
-      {/* Subtle vignette — top + bottom — makes it feel like a camera */}
+      {/* Subtle vignette */}
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_50%,rgba(0,0,0,0.35)_100%)] pointer-events-none z-10" />
 
-      {/* LIVE badge */}
-      <div className="absolute top-2 left-2 z-20 flex items-center gap-1 bg-red-600/90 backdrop-blur-sm text-white text-[9px] font-bold px-1.5 py-0.5 rounded-sm uppercase tracking-widest">
-        <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-        Live
-      </div>
+      {/* LIVE badge — only when a test is actively running */}
+      {isRunning && (
+        <div className="absolute top-2 left-2 z-20 flex items-center gap-1 bg-red-600/90 backdrop-blur-sm text-white text-[9px] font-bold px-1.5 py-0.5 rounded-sm uppercase tracking-widest">
+          <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+          Live
+        </div>
+      )}
     </div>
   );
 }
@@ -639,7 +658,14 @@ function ScanModal({ siteId, siteName, onClose }: { siteId: string; siteName: st
 function SiteCard({ card }: { card: MinistryCard }) {
   const isScheduled = card.schedule > 0;
   const isRunning = card.latestRunStatus === "running" || card.latestRunStatus === "queued";
+  const hasRuns = card.latestRunId !== null || card.totalRuns > 0;
   const [launching, setLaunching] = useState(false);
+
+  // ── State classification ──────────────────────────────────────────────────
+  // 1.1: Auto monitoring ON + test currently running → join live view
+  // 1.2: Auto monitoring ON + test done → show last results (no manual trigger)
+  // 2:   Auto monitoring OFF + has previous runs → results + Run Now button
+  // 3:   Auto monitoring OFF + no runs at all → empty state + Run First Test
 
   const ragLabel = card.rag === "green" ? "Healthy" : card.rag === "yellow" ? "Degraded" : card.rag === "red" ? "Down" : "Unknown";
   const ragDotCls = card.rag === "green" ? "bg-green-500" : card.rag === "yellow" ? "bg-yellow-500" : card.rag === "red" ? "bg-red-500" : "bg-gray-500";
@@ -720,7 +746,7 @@ function SiteCard({ card }: { card: MinistryCard }) {
           disabled={launching}
           className="w-full text-left focus:outline-none group/video relative"
         >
-          <ScreenshotCarousel siteId={card.siteId} runId={card.latestRunId} stepCount={card.latestRunStepCount} />
+          <ScreenshotCarousel siteId={card.siteId} runId={card.latestRunId} stepCount={card.latestRunStepCount} isRunning={isRunning} hasRuns={hasRuns} />
           {/* Play overlay on hover */}
           <div className="absolute inset-0 rounded-xl flex items-center justify-center opacity-0 group-hover/video:opacity-100 transition-opacity bg-black/30 pointer-events-none">
             <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
@@ -751,36 +777,99 @@ function SiteCard({ card }: { card: MinistryCard }) {
           {isScheduled ? `Every ${card.schedule} min` : "Manual only"}
         </div>
 
-        {/* Action button */}
-        <button
-          onClick={openLiveView}
-          disabled={launching}
-          className="w-full flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-white text-[#0a0a0a] text-xs font-semibold hover:bg-white/90 transition-colors disabled:opacity-60"
-        >
-          {launching ? (
-            <>
-              <div className="w-3 h-3 border border-[#0a0a0a]/40 border-t-[#0a0a0a] rounded-full animate-spin" />
-              Starting…
-            </>
-          ) : isRunning ? (
-            <>
+        {/* Action button — varies by state */}
+        {isScheduled ? (
+          // State 1.1 or 1.2: auto monitoring — never let governor trigger a new run
+          isRunning ? (
+            // State 1.1: test in progress → join live view
+            <button
+              onClick={openLiveView}
+              disabled={launching}
+              className="w-full flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-500 transition-colors disabled:opacity-60"
+            >
               <Activity className="w-3 h-3" />
               Watch Live
-            </>
-          ) : isScheduled ? (
-            <>
+            </button>
+          ) : hasRuns ? (
+            // State 1.2: auto monitoring, last test done → view results only
+            <button
+              onClick={openLiveView}
+              disabled={launching}
+              className="w-full flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-white text-[#0a0a0a] text-xs font-semibold hover:bg-white/90 transition-colors disabled:opacity-60"
+            >
               <Eye className="w-3 h-3" />
-              {card.latestRunId ? "View Last Report" : "No runs yet"}
-            </>
+              View Last Report
+            </button>
           ) : (
-            <>
-              <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
-                <path d="M3 2.5l10 5.5-10 5.5V2.5z" />
-              </svg>
-              Run Now
-            </>
-          )}
-        </button>
+            // State 1.2b: auto monitoring enabled, first scan hasn't run yet
+            <div className="w-full flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white/40 text-xs font-medium cursor-default">
+              <Clock className="w-3 h-3" />
+              First scan pending…
+            </div>
+          )
+        ) : !hasRuns ? (
+          // State 3: no schedule, no runs → prominent first-test CTA
+          <button
+            onClick={openLiveView}
+            disabled={launching}
+            className="w-full flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-white text-[#0a0a0a] text-xs font-semibold hover:bg-white/90 transition-colors disabled:opacity-60"
+          >
+            {launching ? (
+              <>
+                <div className="w-3 h-3 border border-[#0a0a0a]/40 border-t-[#0a0a0a] rounded-full animate-spin" />
+                Starting…
+              </>
+            ) : (
+              <>
+                <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M3 2.5l10 5.5-10 5.5V2.5z" />
+                </svg>
+                Run First Test
+              </>
+            )}
+          </button>
+        ) : (
+          // State 2: no schedule, has previous runs → show results + run again
+          <div className="flex gap-2">
+            <button
+              onClick={openLiveView}
+              disabled={launching}
+              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-white/10 border border-white/15 text-white text-xs font-semibold hover:bg-white/15 transition-colors disabled:opacity-60"
+            >
+              <Eye className="w-3 h-3" />
+              View Report
+            </button>
+            <button
+              onClick={async () => {
+                setLaunching(true);
+                try {
+                  const res = await fetch(`/api/sites/${card.siteId}/runs`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ triggeredBy: "manual" }),
+                  });
+                  const data = await res.json();
+                  const runId = data.run?.id ?? data.runId ?? data.id;
+                  if (runId) { window.location.href = `/live/${runId}`; return; }
+                } catch {}
+                setLaunching(false);
+              }}
+              disabled={launching}
+              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-white text-[#0a0a0a] text-xs font-semibold hover:bg-white/90 transition-colors disabled:opacity-60"
+            >
+              {launching ? (
+                <div className="w-3 h-3 border border-[#0a0a0a]/40 border-t-[#0a0a0a] rounded-full animate-spin" />
+              ) : (
+                <>
+                  <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
+                    <path d="M3 2.5l10 5.5-10 5.5V2.5z" />
+                  </svg>
+                  Run Now
+                </>
+              )}
+            </button>
+          </div>
+        )}
       </div>
     </>
   );
