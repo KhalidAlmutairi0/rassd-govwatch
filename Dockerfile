@@ -45,8 +45,9 @@ RUN npx prisma generate
 # Copy source
 COPY . .
 
-# Build Next.js
-RUN npm run build
+# Build Next.js — DATABASE_URL must exist at build time for Prisma schema validation.
+# The real value is injected by Render at runtime via environment variables.
+RUN DATABASE_URL="postgresql://build:build@localhost:5432/build" npm run build
 
 # Create artifacts directory
 RUN mkdir -p artifacts
