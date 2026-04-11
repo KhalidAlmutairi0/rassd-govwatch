@@ -3,7 +3,6 @@ FROM node:20-slim
 # Install Chromium + system deps for Playwright
 RUN apt-get update && apt-get install -y \
     chromium \
-    chromium-driver \
     fonts-noto \
     fonts-noto-cjk \
     ca-certificates \
@@ -26,8 +25,8 @@ RUN apt-get update && apt-get install -y \
     libgbm1 \
     libpango-1.0-0 \
     libcairo2 \
-    libasound2 \
     --no-install-recommends \
+    && (apt-get install -y libasound2 2>/dev/null || apt-get install -y libasound2t64 2>/dev/null || true) \
     && rm -rf /var/lib/apt/lists/*
 
 # Tell Playwright to use the system Chromium
@@ -52,7 +51,7 @@ RUN npm run build
 # Create artifacts directory
 RUN mkdir -p artifacts
 
-EXPOSE 3000 3003
+EXPOSE 3000
 
 COPY start.sh ./start.sh
 RUN chmod +x start.sh

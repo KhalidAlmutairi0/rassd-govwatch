@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: rassd-govwatch
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: starter          # $7/mo — free tier doesn't support Docker
+    healthCheckPath: /login
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: govwatch-db
+          property: connectionString
+      - key: NEXT_PUBLIC_WS_URL
+        value: wss://rassd-govwatch.onrender.com
+      - key: PORT
+        value: 3000
+      - key: WORKER_PORT
+        value: 3003
+      - key: NODE_ENV
+        value: production
+      - key: GROQ_API_KEY
+        sync: false   # set manually in Render dashboard → Environment
+
+databases:
+  - name: govwatch-db
+    databaseName: govwatch
+    user: govwatch
+    plan: starter          # $7/mo
