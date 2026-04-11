@@ -17,7 +17,7 @@ cmds = [
 ]
 
 [phases.build]
-cmds = ["npm run build"]
+cmds = ["echo 'Worker: no build step'"]
 
 [start]
-cmd = "npx prisma migrate deploy && npm start"
+cmd = "npx tsx src/worker/scheduler.ts"
