@@ -1,0 +1,47 @@
+version: "3.9"
+
+services:
+  # ── PostgreSQL database ──────────────────────────────────────────
+  db:
+    image: postgres:16-alpine        # Official Postgres image, small size
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: govwatch
+      POSTGRES_PASSWORD: govwatch123
+      POSTGRES_DB: govwatch
+    volumes:
+      - postgres_data:/var/lib/postgresql/data   # Persist DB across restarts
+    ports:
+      - "5432:5432"                  # expose locally so you can inspect with pgAdmin
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U govwatch"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── GovWatch app (Next.js + Worker) ─────────────────────────────
+  app:
+    build:
+      context: .                     # Build from the Dockerfile in this directory
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy   # Wait for Postgres to be ready before starting
+    ports:
+      - "3000:3000"                  # Next.js  →  localhost:3000
+      - "3003:3003"                  # WebSocket →  localhost:3003
+    environment:
+      DATABASE_URL: "postgresql://govwatch:govwatch123@db:5432/govwatch"
+      #                                               ↑ "db" = the service name above
+      #                                               Docker networking resolves it automatically
+      NEXT_PUBLIC_WS_URL: "ws://localhost:3003"
+      WORKER_PORT: "3003"
+      NEXTAUTH_SECRET: "local-dev-secret-change-in-production-32chars"
+      NODE_ENV: "production"
+    volumes:
+      - artifacts_data:/app/artifacts  # Persist screenshots between restarts
+
+volumes:
+  postgres_data:    # Named volume — Docker manages the storage location
+  artifacts_data:
