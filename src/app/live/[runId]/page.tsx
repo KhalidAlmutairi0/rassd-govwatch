@@ -121,7 +121,14 @@ export default function LiveViewPage() {
       return () => { cleanupRef.current = true; };
     }
     cleanupRef.current = false;
-    const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:3003";
+    // Derive WS URL from the current browser host so it works in Docker
+    // (localhost:3000 → ws://localhost:3000) and on Render (same origin).
+    // NEXT_PUBLIC_WS_URL can override at build time for special setups.
+    const wsUrl =
+      process.env.NEXT_PUBLIC_WS_URL ||
+      (typeof window !== "undefined"
+        ? `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`
+        : "ws://localhost:3003");
     const ws = new WebSocket(`${wsUrl}/live/${runId}`);
     wsRef.current = ws;
 

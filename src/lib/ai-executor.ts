@@ -84,7 +84,8 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
 
     browser = await chromium.launch({
       headless: true,
-      args: ["--no-sandbox", "--disable-dev-shm-usage"],
+      executablePath: process.env.CHROME_PATH || undefined,
+      args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-setuid-sandbox"],
     });
 
     const context = await browser.newContext({
