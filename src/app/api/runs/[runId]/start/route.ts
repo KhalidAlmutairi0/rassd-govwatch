@@ -2,15 +2,11 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { executeAITest } from "@/lib/ai-executor";
-import { executeAITestMCP } from "@/lib/ai-executor-mcp";
 import { processRunResult } from "@/lib/incidents";
 import { broadcast, createRelayConnection } from "@/lib/ws-server";
 import { ensureWebSocketServer } from "@/lib/init-ws";
 import { WebSocket } from "ws";
 import path from "path";
-
-// Get AI execution mode from environment
-const AI_MODE = process.env.AI_EXECUTION_MODE || "plan"; // "plan" or "mcp"
 
 // POST /api/runs/[runId]/start - Start execution when client is ready
 export async function POST(
@@ -120,51 +116,10 @@ async function executeRun(
   };
 
   try {
-    console.log(`[AI EXECUTOR] Starting AI-powered test for run ${runId} (mode: ${AI_MODE})`);
+    console.log(`[AI EXECUTOR] Starting test for run ${runId}`);
 
     const artifactsDir = path.join(process.cwd(), "artifacts", siteId, runId);
 
-    if (AI_MODE === "mcp") {
-      const result = await executeAITestMCP({
-        url: baseUrl,
-        runId,
-        siteId,
-        artifactsDir,
-        maxIterations: 50,
-        onProgress: (event) => {
-          console.log(`[AI MCP] Progress: ${event.phase} - ${event.description}`);
-          if (event.type === "load") {
-            send({ type: "run-status", status: "running", phase: event.description });
-          } else if (event.type === "testing") {
-            send({
-              type: "step-update",
-              step: {
-                index: event.currentStep || 0,
-                total: event.totalSteps || 0,
-                description: event.description,
-                status: event.status === "running" ? "running" : event.status === "completed" ? "passed" : "failed",
-              },
-            });
-          } else if (event.type === "complete") {
-            send({ type: "run-complete", status: event.status === "completed" ? "passed" : "failed", summary: result.summary });
-          }
-        },
-      });
-
-      console.log(`[AI MCP] Test completed: ${result.status}, ${result.totalIterations} iterations`);
-      await prisma.site.update({ where: { id: siteId }, data: { lastRunAt: new Date() } });
-
-      const failedSteps = result.steps.filter((s) => !s.toolResult?.success);
-      if (failedSteps.length > 0) {
-        await processRunResult(runId, siteId, journeyId, "failed",
-          failedSteps.map((s) => ({ status: "failed" as const, error: s.toolResult?.error || "Unknown error" })) as any);
-      } else {
-        await processRunResult(runId, siteId, journeyId, "passed", [] as any);
-      }
-      return;
-    }
-
-    // ── PLAN MODE ──
     const result = await executeAITest({
       url: baseUrl,
       runId,
