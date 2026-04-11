@@ -58,11 +58,18 @@ function SiteCard({ site, onScheduleToggle, onRunNow }: {
   const isScheduled = site.schedule > 0;
   const [runLoading, setRunLoading] = useState(false);
   const [schedLoading, setSchedLoading] = useState(false);
+  const [runError, setRunError] = useState("");
 
   const handleRunNow = async () => {
     setRunLoading(true);
-    await onRunNow(site.id);
-    setRunLoading(false);
+    setRunError("");
+    try {
+      await onRunNow(site.id);
+    } catch (err: any) {
+      setRunError(err.message || "Failed to start scan");
+    } finally {
+      setRunLoading(false);
+    }
   };
 
   const handleToggleSchedule = async () => {
@@ -154,6 +161,11 @@ function SiteCard({ site, onScheduleToggle, onRunNow }: {
           View Details
         </Link>
       </div>
+      {runError && (
+        <p className="text-xs text-red-400 bg-red-950/30 border border-red-900/30 px-2.5 py-1.5 rounded-lg">
+          {runError}
+        </p>
+      )}
     </div>
   );
 }
@@ -199,8 +211,11 @@ export default function AllSitesPage() {
       body: JSON.stringify({}),
     });
     const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Failed to start scan");
     if (data.run?.id) {
       router.push(`/live/${data.run.id}`);
+    } else {
+      throw new Error("No run ID returned from server");
     }
   };
 
