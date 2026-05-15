@@ -9,12 +9,32 @@ export async function GET(
 
   const run = await prisma.run.findUnique({
     where: { id: runId },
-    select: { status: true, durationMs: true, totalSteps: true, passedSteps: true, failedSteps: true },
+    select: {
+      status: true,
+      durationMs: true,
+      totalSteps: true,
+      passedSteps: true,
+      failedSteps: true,
+      site: { select: { baseUrl: true, name: true } },
+    },
   });
 
   if (!run) {
     return NextResponse.json({ error: "Run not found" }, { status: 404 });
   }
 
-  return NextResponse.json(run);
+  const elements = await prisma.elementTestResult.findMany({
+    where: { runId },
+    select: {
+      elementType: true,
+      elementText: true,
+      action: true,
+      status: true,
+      responseTimeMs: true,
+      error: true,
+    },
+    orderBy: { id: "asc" },
+  });
+
+  return NextResponse.json({ ...run, elements });
 }

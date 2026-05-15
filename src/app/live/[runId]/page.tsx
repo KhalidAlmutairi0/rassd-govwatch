@@ -143,12 +143,38 @@ export default function LiveViewPage() {
           })
           .catch(console.error);
 
-        // Poll run status as fallback — if scan errors before WS messages arrive
+        // Poll run status + element progress as fallback when WS is unavailable
         const pollInterval = setInterval(async () => {
           try {
             const res = await fetch(`/api/runs/${runId}/status`);
             if (!res.ok) return;
             const data = await res.json();
+
+            // Update URL from site info
+            if (data.site?.baseUrl) setCurrentUrl((prev: string) => prev || data.site.baseUrl);
+
+            // Show "running" state in UI even without WS frames
+            if (data.status === "running" && runStatusRef.current !== "running") {
+              startTimer();
+              runStatusRef.current = "running";
+              setRunStatus("running");
+            }
+
+            // Build step list from element results in DB
+            if (data.elements && data.elements.length > 0) {
+              setSteps(data.elements.map((el: any, i: number) => ({
+                index: i,
+                action: el.action || el.elementType,
+                description: el.elementText || `${el.elementType}: ${el.action}`,
+                status: el.status === "passed" || el.status === "warning" ? "passed"
+                  : el.status === "failed" ? "failed"
+                  : el.status === "pending" ? "running" : el.status,
+                durationMs: el.responseTimeMs,
+                error: el.error,
+              })));
+            }
+
+            // Terminal state — stop polling
             if (data.status && ["passed", "failed", "error"].includes(data.status)) {
               clearInterval(pollInterval);
               runStatusRef.current = data.status;
@@ -156,7 +182,7 @@ export default function LiveViewPage() {
               if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
             }
           } catch {}
-        }, 5000);
+        }, 3000);
         setTimeout(() => clearInterval(pollInterval), 300000);
       }
     };
