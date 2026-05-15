@@ -61,16 +61,19 @@ export async function GET() {
     }
 
     const platformKPIs = sites.map((site) => {
-      const runs24h = site.runs.filter((r) => now - new Date(r.startedAt).getTime() < h24);
-      const runs72h = site.runs.filter((r) => now - new Date(r.startedAt).getTime() < h72);
-      const runs7d = site.runs.filter((r) => now - new Date(r.startedAt).getTime() < d7);
+      // Only count completed runs (passed/failed), not error/queued/running
+      const completedStatuses = ["passed", "failed"];
+      const allRuns24h = site.runs.filter((r) => now - new Date(r.startedAt).getTime() < h24);
+      const allRuns72h = site.runs.filter((r) => now - new Date(r.startedAt).getTime() < h72);
+      const allRuns7d = site.runs.filter((r) => now - new Date(r.startedAt).getTime() < d7);
+      const runs24h = allRuns24h.filter((r) => completedStatuses.includes(r.status));
+      const runs72h = allRuns72h.filter((r) => completedStatuses.includes(r.status));
+      const runs7d = allRuns7d.filter((r) => completedStatuses.includes(r.status));
 
-      // Availability: element-level pass rate (not run-level)
       function calcAvailability(runs: typeof runs24h) {
-        const completed = runs.filter((r) => ["passed", "failed", "error"].includes(r.status));
-        if (completed.length === 0) return null;
-        const totalSteps = completed.reduce((s, r) => s + (r.totalSteps || 0), 0);
-        const passedSteps = completed.reduce((s, r) => s + (r.passedSteps || 0), 0);
+        if (runs.length === 0) return null;
+        const totalSteps = runs.reduce((s, r) => s + (r.totalSteps || 0), 0);
+        const passedSteps = runs.reduce((s, r) => s + (r.passedSteps || 0), 0);
         if (totalSteps === 0) return null;
         return Math.round((passedSteps / totalSteps) * 100);
       }
@@ -112,9 +115,12 @@ export async function GET() {
       // MTTD: scan interval (how quickly we detect issues)
       const siteMttdMs = site.schedule * 60 * 1000;
 
-      // Outage: estimate from failed runs — each failed run = ~scanInterval of outage
+      // Outage: estimate from failed completed runs — each failed run = ~scanInterval of outage
       const failedRuns30d = site.runs.filter(
         (r) => r.status === "failed" && now - new Date(r.startedAt).getTime() < d30
+      );
+      const completedRuns30d = site.runs.filter(
+        (r) => completedStatuses.includes(r.status) && now - new Date(r.startedAt).getTime() < d30
       );
       const scanIntervalMs = site.schedule * 60 * 1000;
       const totalOutageMs = failedRuns30d.length * scanIntervalMs;
@@ -156,16 +162,31 @@ export async function GET() {
         longestOutageMs: longestOutageMs > 0 ? longestOutageMs : null,
         totalRuns24h: runs24h.length,
         totalRuns7d: runs7d.length,
-        completedRuns24h: runs24h.filter((r) => ["passed", "failed", "error"].includes(r.status)).length,
-        completedRuns7d: runs7d.filter((r) => ["passed", "failed", "error"].includes(r.status)).length,
+        completedRuns24h: runs24h.length,
+        completedRuns7d: runs7d.length,
         activeIncidents: activeIncidents.length,
         totalIncidents30d: incidents30d.length,
         resolvedIncidents30d: resolvedSiteIncidents.length,
-        lastRunAt: site.runs[0]?.startedAt ?? null,
-        lastRunStatus: site.runs[0]?.status ?? null,
-        totalSteps: site.runs[0]?.totalSteps ?? 0,
-        passedSteps: site.runs[0]?.passedSteps ?? 0,
-        failedSteps: site.runs[0]?.failedSteps ?? 0,
+        lastRunAt: (() => {
+          const completed = site.runs.find((r) => completedStatuses.includes(r.status));
+          return completed?.startedAt ?? site.runs[0]?.startedAt ?? null;
+        })(),
+        lastRunStatus: (() => {
+          const completed = site.runs.find((r) => completedStatuses.includes(r.status));
+          return completed?.status ?? (site.runs[0]?.status === "error" ? "error" : null);
+        })(),
+        totalSteps: (() => {
+          const completed = site.runs.find((r) => completedStatuses.includes(r.status));
+          return completed?.totalSteps ?? 0;
+        })(),
+        passedSteps: (() => {
+          const completed = site.runs.find((r) => completedStatuses.includes(r.status));
+          return completed?.passedSteps ?? 0;
+        })(),
+        failedSteps: (() => {
+          const completed = site.runs.find((r) => completedStatuses.includes(r.status));
+          return completed?.failedSteps ?? 0;
+        })(),
       };
     });
 

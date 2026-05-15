@@ -64,23 +64,15 @@ export async function GET() {
     });
     const runCountBySite = new Map(runCounts.map((r) => [r.siteId, r._count.id]));
 
-    // Latest run per site (for screenshot previews)
+    // Latest COMPLETED run per site (passed/failed only — not error/queued)
     const latestRuns = await prisma.run.findMany({
-      where: { siteId: { in: siteIds } },
+      where: { siteId: { in: siteIds }, status: { in: ["passed", "failed"] } },
       orderBy: { startedAt: "desc" },
       distinct: ["siteId"],
-      select: { id: true, siteId: true, status: true, totalSteps: true },
+      select: { id: true, siteId: true, status: true, totalSteps: true, passedSteps: true },
     });
     const latestRunBySite = new Map(latestRuns.map((r) => [r.siteId, r]));
-
-    // Latest COMPLETED run per site — for a meaningful success rate score
-    const completedRuns = await prisma.run.findMany({
-      where: { siteId: { in: siteIds }, status: { in: ["passed", "failed", "error"] } },
-      orderBy: { startedAt: "desc" },
-      distinct: ["siteId"],
-      select: { id: true, siteId: true, status: true, passedSteps: true, totalSteps: true },
-    });
-    const completedRunBySite = new Map(completedRuns.map((r) => [r.siteId, r]));
+    const completedRunBySite = latestRunBySite;
 
     // Per-ministry cards — plain language only
     const ministryCards = sites.map((site) => {

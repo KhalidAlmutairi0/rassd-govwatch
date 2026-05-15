@@ -142,6 +142,22 @@ export default function LiveViewPage() {
             if (!res.ok && data.redirect) router.push(data.redirect);
           })
           .catch(console.error);
+
+        // Poll run status as fallback — if scan errors before WS messages arrive
+        const pollInterval = setInterval(async () => {
+          try {
+            const res = await fetch(`/api/runs/${runId}/status`);
+            if (!res.ok) return;
+            const data = await res.json();
+            if (data.status && ["passed", "failed", "error"].includes(data.status)) {
+              clearInterval(pollInterval);
+              runStatusRef.current = data.status;
+              setRunStatus(data.status);
+              if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+            }
+          } catch {}
+        }, 5000);
+        setTimeout(() => clearInterval(pollInterval), 300000);
       }
     };
 
