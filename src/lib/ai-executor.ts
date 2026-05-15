@@ -171,7 +171,7 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
       viewport: { width: 1280, height: 720 },
       locale: "ar-SA",
       timezoneId: "Asia/Riyadh",
-      userAgent: "GovWatch/1.0 (Monitoring Bot)",
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
     });
 
     page = await context.newPage();
@@ -200,7 +200,7 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
     });
 
     // Navigate to URL — use networkidle for SPAs that render via JS
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
     // Wait for SPA frameworks (Angular, React) to finish rendering
     await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
     await page.waitForTimeout(1500);
