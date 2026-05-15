@@ -43,7 +43,8 @@ COPY prisma ./prisma/
 RUN npm ci
 RUN npx prisma generate
 
-# Copy source
+# Copy source (bust cache on every deploy)
+ARG CACHEBUST=1
 COPY . .
 
 # Build Next.js — SQLite needs a dummy path at build time
