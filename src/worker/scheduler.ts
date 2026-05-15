@@ -17,19 +17,46 @@ const wsPort = parseInt(process.env.WORKER_PORT || "3003");
 initWebSocketServer(wsPort);
 console.log(`📡 WebSocket server running on ws://localhost:${wsPort}`);
 
-// Clean up stuck runs from previous deploys (queued/running without progress)
-prisma.run.updateMany({
-  where: { status: { in: ["queued", "running"] } },
-  data: { status: "error", errorJson: JSON.stringify({ message: "Cleaned up after server restart" }), finishedAt: new Date() },
-}).then((r) => { if (r.count > 0) console.log(`🧹 Cleaned up ${r.count} stuck runs`); }).catch(console.error);
-
-console.log("⏰ Scheduler running (checks every minute)");
-
+// Clean up stuck runs from previous deploys, then start the manual-run poll
 let schedulerBusy = false;
+let manualRunBusy = false;
+prisma.run.updateMany({
+  where: { status: { in: ["running"] } },
+  data: { status: "error", errorJson: JSON.stringify({ message: "Cleaned up after server restart" }), finishedAt: new Date() },
+}).then((r) => {
+  if (r.count > 0) console.log(`🧹 Cleaned up ${r.count} stuck runs`);
+  console.log("⏰ Scheduler running (checks every 5 min, manual runs every 2s)");
+  // Start the manual-run poll AFTER cleanup so we don't race
+  startManualRunPoll();
+}).catch(console.error);
 
-// Run every 5 minutes (reduce container resource pressure)
+function startManualRunPoll() {
+  // ── Fast poll: pick up manually-queued runs every 2 seconds ──
+  // Runs execute in the worker process which owns the WS server,
+  // so broadcast() delivers frames directly to the live viewer.
+  setInterval(async () => {
+  if (manualRunBusy) return;
+  try {
+    const queued = await prisma.run.findFirst({
+      where: { status: "queued" },
+      include: { site: true, journey: true },
+      orderBy: { startedAt: "asc" },
+    });
+    if (!queued) return;
+
+    manualRunBusy = true;
+    console.log(`▶️  Manual run picked up: ${queued.id} for ${queued.site.name}`);
+    await runJourney(queued.site, queued.journey, queued.id);
+  } catch (error) {
+    console.error("Manual run error:", error);
+  } finally {
+    manualRunBusy = false;
+  }
+  }, 2000);
+}
+
+// ── Scheduled scans: every 5 minutes ──
 cron.schedule("*/5 * * * *", async () => {
-  // Check escalation timers every minute
   checkEscalations().catch(console.error);
 
   if (schedulerBusy) {
@@ -62,19 +89,27 @@ cron.schedule("*/5 * * * *", async () => {
   }
 });
 
-async function runJourney(site: any, journey: any) {
-  console.log(`▶️  Running AI-powered test for ${site.name}`);
+async function runJourney(site: any, journey: any, existingRunId?: string) {
+  console.log(`▶️  Running AI-powered test for ${site.name}${existingRunId ? ` (manual run ${existingRunId})` : ""}`);
 
-  // Create run record
-  const run = await prisma.run.create({
-    data: {
-      siteId: site.id,
-      journeyId: journey.id,
-      status: "running",
-      triggeredBy: "scheduler",
-      totalSteps: 0,
-    },
-  });
+  // Use existing run record (manual) or create a new one (scheduled)
+  let run;
+  if (existingRunId) {
+    run = await prisma.run.update({
+      where: { id: existingRunId },
+      data: { status: "running" },
+    });
+  } else {
+    run = await prisma.run.create({
+      data: {
+        siteId: site.id,
+        journeyId: journey.id,
+        status: "running",
+        triggeredBy: "scheduler",
+        totalSteps: 0,
+      },
+    });
+  }
 
   // Broadcast to any live viewers watching this run
   const { broadcast } = await import("../lib/ws-server");
