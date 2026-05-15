@@ -30,11 +30,6 @@ RUN apt-get update && apt-get install -y \
     && (apt-get install -y libasound2 2>/dev/null || apt-get install -y libasound2t64 2>/dev/null || true) \
     && rm -rf /var/lib/apt/lists/*
 
-# Tell Playwright to use the system Chromium
-ENV PLAYWRIGHT_BROWSERS_PATH=/usr/bin
-ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
-ENV CHROME_PATH=/usr/bin/chromium
-
 WORKDIR /app
 
 # Install dependencies
@@ -42,6 +37,9 @@ COPY package*.json ./
 COPY prisma ./prisma/
 RUN npm ci
 RUN npx prisma generate
+
+# Install Playwright's bundled Chromium (version-matched)
+RUN npx playwright install chromium
 
 # Copy source (bust cache on every deploy)
 ARG CACHEBUST=1

@@ -158,17 +158,12 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
 
     browser = await chromium.launch({
       headless: true,
-      executablePath: process.env.CHROME_PATH || undefined,
       args: [
         "--no-sandbox",
         "--disable-dev-shm-usage",
         "--disable-setuid-sandbox",
         "--disable-gpu",
         "--no-zygote",
-        "--disable-extensions",
-        "--disable-background-networking",
-        "--mute-audio",
-        "--no-first-run",
       ],
     });
 
