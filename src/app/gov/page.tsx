@@ -27,12 +27,19 @@ interface MinistryCard {
   lastCheckedAt: string | null;
 }
 
+interface IssueCategory {
+  label: string;
+  count: number;
+  pct: number;
+}
+
 interface DashboardData {
   complianceScore: number;
   totalSites: number;
   totalActiveIncidents: number;
   ministryCards: MinistryCard[];
   trend: number | null;
+  issueCategories?: IssueCategory[];
 }
 
 interface AttentionItem {
@@ -86,7 +93,7 @@ interface MockRun {
   totalSteps: number;
 }
 
-type TabId = "overview" | "alerts" | "directives";
+type TabId = "overview" | "alerts" | "directives" | "kpi";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -614,7 +621,7 @@ function ScanModal({ siteId, siteName, onClose }: { siteId: string; siteName: st
         </div>
 
         {/* Latest Screenshot */}
-        <div className="flex-1 bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-xl flex flex-col overflow-hidden">
+        <div className="flex-1 bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-xl flex flex-col overflow-hidden max-h-[420px]">
           <div className="px-4 py-3 border-b border-[hsl(var(--border))] flex items-center gap-2">
             <Activity className="w-4 h-4 text-[hsl(var(--muted-foreground))]" />
             <span className="text-sm font-semibold text-white">Latest Screenshot</span>
@@ -630,7 +637,7 @@ function ScanModal({ siteId, siteName, onClose }: { siteId: string; siteName: st
               <img
                 src={frame}
                 alt="Live screenshot"
-                className="w-full h-full object-contain object-top"
+                className="max-w-full max-h-[360px] object-contain object-top"
               />
             ) : (
               <div className="flex flex-col items-center gap-3 text-[hsl(var(--muted-foreground))]">
@@ -655,11 +662,23 @@ function ScanModal({ siteId, siteName, onClose }: { siteId: string; siteName: st
 
 // ─── Site Card ────────────────────────────────────────────────────────────────
 
-function SiteCard({ card }: { card: MinistryCard }) {
+function SiteCard({ card, onRemove }: { card: MinistryCard; onRemove?: (siteId: string) => void }) {
   const isScheduled = card.schedule > 0;
   const isRunning = card.latestRunStatus === "running" || card.latestRunStatus === "queued";
   const hasRuns = card.latestRunId !== null || card.totalRuns > 0;
   const [launching, setLaunching] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [removing, setRemoving] = useState(false);
+
+  async function handleRemove() {
+    setRemoving(true);
+    try {
+      const res = await fetch(`/api/sites/${card.siteId}`, { method: "DELETE" });
+      if (res.ok) onRemove?.(card.siteId);
+    } catch {}
+    setRemoving(false);
+    setConfirmRemove(false);
+  }
 
   // ── State classification ──────────────────────────────────────────────────
   // 1.1: Auto monitoring ON + test currently running → join live view
@@ -671,24 +690,19 @@ function SiteCard({ card }: { card: MinistryCard }) {
   const ragDotCls = card.rag === "green" ? "bg-green-500" : card.rag === "yellow" ? "bg-yellow-500" : card.rag === "red" ? "bg-red-500" : "bg-gray-500";
   const ragTextCls = card.rag === "green" ? "text-green-400" : card.rag === "yellow" ? "text-yellow-400" : card.rag === "red" ? "text-red-400" : "text-gray-400";
 
-  async function openLiveView() {
-    // If a run is currently in progress, watch it live
-    if (card.latestRunId && isRunning) {
+  function watchLive() {
+    if (card.latestRunId) {
       window.location.href = `/live/${card.latestRunId}`;
-      return;
     }
+  }
 
-    if (isScheduled) {
-      // Scheduled sites: never start a new run — just show the latest report
-      if (card.latestRunId) {
-        window.location.href = `/report/${card.latestRunId}`;
-      } else {
-        window.location.href = `/gov/platform/${card.siteId}`;
-      }
-      return;
+  function viewReport() {
+    if (card.latestRunId) {
+      window.location.href = `/report/${card.latestRunId}`;
     }
+  }
 
-    // Unscheduled sites ("Run Now"): trigger a new run and watch it
+  async function startNewScan() {
     setLaunching(true);
     try {
       const res = await fetch(`/api/sites/${card.siteId}/runs`, {
@@ -703,19 +717,46 @@ function SiteCard({ card }: { card: MinistryCard }) {
         return;
       }
     } catch (err) {
-      console.error("[openLiveView] fetch error:", err);
+      console.error("[startNewScan] fetch error:", err);
     }
-    if (card.latestRunId) {
-      window.location.href = `/live/${card.latestRunId}`;
-      return;
-    }
-    window.location.href = `/gov/platform/${card.siteId}`;
     setLaunching(false);
   }
 
   return (
     <>
-      <div className="bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-xl p-4 flex flex-col gap-3 hover:border-white/20 hover:shadow-lg hover:shadow-black/20 transition-all">
+      <div className="bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-xl p-4 flex flex-col gap-3 hover:border-white/20 hover:shadow-lg hover:shadow-black/20 transition-all relative group/card">
+        {/* Remove button */}
+        {onRemove && !confirmRemove && (
+          <button
+            onClick={() => setConfirmRemove(true)}
+            className="absolute top-2 right-2 w-6 h-6 rounded-full bg-white/5 flex items-center justify-center opacity-0 group-hover/card:opacity-100 hover:bg-red-500/20 hover:text-red-400 text-[hsl(var(--muted-foreground))] transition-all z-10"
+            title="Remove site"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        )}
+        {confirmRemove && (
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm rounded-xl z-20 flex flex-col items-center justify-center gap-3 p-4">
+            <p className="text-sm text-white text-center font-medium">Remove <span className="text-red-400">{card.nameAr || card.name}</span>?</p>
+            <p className="text-xs text-[hsl(var(--muted-foreground))] text-center">This will delete all scan history and data for this site.</p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setConfirmRemove(false)}
+                className="px-4 py-1.5 text-xs font-medium rounded-lg bg-white/10 text-white hover:bg-white/20 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRemove}
+                disabled={removing}
+                className="px-4 py-1.5 text-xs font-semibold rounded-lg bg-red-600 text-white hover:bg-red-500 transition-colors disabled:opacity-50"
+              >
+                {removing ? "Removing…" : "Remove"}
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Top: favicon left — status right */}
         <div className="flex items-center justify-between gap-2">
           <SiteFavicon baseUrl={card.baseUrl} name={card.name} rag={card.rag} />
@@ -740,10 +781,10 @@ function SiteCard({ card }: { card: MinistryCard }) {
           <p className="text-[11px] text-[hsl(var(--muted-foreground))]/60 mt-1 font-mono">{card.baseUrl.replace(/^https?:\/\//, "")}</p>
         </div>
 
-        {/* Screenshots — click to open live view */}
+        {/* Screenshots — click to watch live or view report */}
         <button
-          onClick={openLiveView}
-          disabled={launching}
+          onClick={isRunning ? watchLive : viewReport}
+          disabled={!card.latestRunId}
           className="w-full text-left focus:outline-none group/video relative"
         >
           <ScreenshotCarousel siteId={card.siteId} runId={card.latestRunId} stepCount={card.latestRunStepCount} isRunning={isRunning} hasRuns={hasRuns} />
@@ -777,40 +818,47 @@ function SiteCard({ card }: { card: MinistryCard }) {
           {isScheduled ? `Every ${card.schedule} min` : "Manual only"}
         </div>
 
-        {/* Action button — varies by state */}
-        {isScheduled ? (
-          // State 1.1 or 1.2: auto monitoring — never let governor trigger a new run
-          isRunning ? (
-            // State 1.1: test in progress → join live view
+        {/* Action buttons — 3 states */}
+        {isRunning ? (
+          /* Scan in progress (dev / scheduler / manual) → watch it live */
+          <button
+            onClick={watchLive}
+            className="w-full flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-500 transition-colors"
+          >
+            <Activity className="w-3 h-3" />
+            Watch Live
+          </button>
+        ) : hasRuns ? (
+          /* Finished scan exists → view report + run new scan */
+          <div className="flex gap-2">
             <button
-              onClick={openLiveView}
-              disabled={launching}
-              className="w-full flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-500 transition-colors disabled:opacity-60"
-            >
-              <Activity className="w-3 h-3" />
-              Watch Live
-            </button>
-          ) : hasRuns ? (
-            // State 1.2: auto monitoring, last test done → view results only
-            <button
-              onClick={openLiveView}
-              disabled={launching}
-              className="w-full flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-white text-[#0a0a0a] text-xs font-semibold hover:bg-white/90 transition-colors disabled:opacity-60"
+              onClick={viewReport}
+              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-white/10 border border-white/15 text-white text-xs font-semibold hover:bg-white/15 transition-colors"
             >
               <Eye className="w-3 h-3" />
-              View Last Report
+              View Report
             </button>
-          ) : (
-            // State 1.2b: auto monitoring enabled, first scan hasn't run yet
-            <div className="w-full flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white/40 text-xs font-medium cursor-default">
-              <Clock className="w-3 h-3" />
-              First scan pending…
-            </div>
-          )
-        ) : !hasRuns ? (
-          // State 3: no schedule, no runs → prominent first-test CTA
+            <button
+              onClick={startNewScan}
+              disabled={launching}
+              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-white text-[#0a0a0a] text-xs font-semibold hover:bg-white/90 transition-colors disabled:opacity-60"
+            >
+              {launching ? (
+                <div className="w-3 h-3 border border-[#0a0a0a]/40 border-t-[#0a0a0a] rounded-full animate-spin" />
+              ) : (
+                <>
+                  <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
+                    <path d="M3 2.5l10 5.5-10 5.5V2.5z" />
+                  </svg>
+                  Run Scan
+                </>
+              )}
+            </button>
+          </div>
+        ) : (
+          /* No scans yet → run first test */
           <button
-            onClick={openLiveView}
+            onClick={startNewScan}
             disabled={launching}
             className="w-full flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-white text-[#0a0a0a] text-xs font-semibold hover:bg-white/90 transition-colors disabled:opacity-60"
           >
@@ -828,68 +876,205 @@ function SiteCard({ card }: { card: MinistryCard }) {
               </>
             )}
           </button>
-        ) : (
-          // State 2: no schedule, has previous runs → show results + run again
-          <div className="flex gap-2">
-            <button
-              onClick={openLiveView}
-              disabled={launching}
-              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-white/10 border border-white/15 text-white text-xs font-semibold hover:bg-white/15 transition-colors disabled:opacity-60"
-            >
-              <Eye className="w-3 h-3" />
-              View Report
-            </button>
-            <button
-              onClick={async () => {
-                setLaunching(true);
-                try {
-                  const res = await fetch(`/api/sites/${card.siteId}/runs`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ triggeredBy: "manual" }),
-                  });
-                  const data = await res.json();
-                  const runId = data.run?.id ?? data.runId ?? data.id;
-                  if (runId) { window.location.href = `/live/${runId}`; return; }
-                } catch {}
-                setLaunching(false);
-              }}
-              disabled={launching}
-              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-white text-[#0a0a0a] text-xs font-semibold hover:bg-white/90 transition-colors disabled:opacity-60"
-            >
-              {launching ? (
-                <div className="w-3 h-3 border border-[#0a0a0a]/40 border-t-[#0a0a0a] rounded-full animate-spin" />
-              ) : (
-                <>
-                  <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
-                    <path d="M3 2.5l10 5.5-10 5.5V2.5z" />
-                  </svg>
-                  Run Now
-                </>
-              )}
-            </button>
-          </div>
         )}
       </div>
     </>
   );
 }
 
+// ─── Critical Issues Section ─────────────────────────────────────────────────
+
+interface CriticalIssue {
+  id: string;
+  severity: string;
+  category: string;
+  title: string;
+  page: string;
+  description: string;
+  elementType: string;
+  section: string | null;
+  responseTimeMs: number | null;
+  urlBefore: string | null;
+  urlAfter: string | null;
+  screenshotAfter: string | null;
+  siteName: string;
+  siteNameAr: string | null;
+  siteUrl: string;
+}
+
+function severityBadge(s: string) {
+  if (s === "Critical") return "bg-red-600 text-white";
+  if (s === "High") return "bg-orange-500 text-white";
+  if (s === "Medium") return "bg-yellow-500 text-black";
+  return "bg-yellow-400 text-black";
+}
+
+function categoryBadge(c: string) {
+  if (c === "Accessibility") return "border-blue-500 text-blue-400";
+  if (c === "UX") return "border-purple-500 text-purple-400";
+  if (c === "QA") return "border-cyan-500 text-cyan-400";
+  if (c === "Performance") return "border-orange-500 text-orange-400";
+  return "border-gray-500 text-gray-400";
+}
+
+function CriticalIssuesSection({ refreshKey = 0 }: { refreshKey?: number }) {
+  const [issues, setIssues] = useState<CriticalIssue[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    setLoading(true);
+    fetch("/api/critical-issues")
+      .then((r) => r.json())
+      .then((d) => setIssues(d.issues ?? []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [refreshKey]);
+
+  if (loading) return null;
+  if (issues.length === 0) return null;
+
+  const criticalCount = issues.filter((i) => i.severity === "Critical").length;
+  const highCount = issues.filter((i) => i.severity === "High").length;
+
+  return (
+    <section className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />
+          <h2 className="text-sm font-bold text-white">
+            {issues.length} Critical Issue{issues.length !== 1 ? "s" : ""} Detected
+          </h2>
+          <div className="flex items-center gap-1.5 ml-2">
+            {criticalCount > 0 && (
+              <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-red-600 text-white">
+                {criticalCount} Critical
+              </span>
+            )}
+            {highCount > 0 && (
+              <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-orange-500 text-white">
+                {highCount} High
+              </span>
+            )}
+          </div>
+        </div>
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="text-xs text-emerald-400 hover:text-emerald-300 transition-colors"
+        >
+          {expanded ? "Hide" : `View all ${issues.length}`}
+        </button>
+      </div>
+
+      {expanded && issues.map((issue) => {
+        const borderCls = issue.severity === "Critical" ? "border-red-600/60" : issue.severity === "High" ? "border-orange-500/60" : "border-yellow-500/40";
+        const bgCls = issue.severity === "Critical" ? "bg-red-950/30" : issue.severity === "High" ? "bg-orange-950/20" : "bg-yellow-950/10";
+        const dotCls = issue.severity === "Critical" ? "bg-red-500" : issue.severity === "High" ? "bg-orange-500" : "bg-yellow-500";
+
+        return (
+          <div key={issue.id} className={`rounded-xl border ${borderCls} ${bgCls} overflow-hidden`}>
+            <div className="px-5 py-4 flex items-start gap-4">
+              <div className="shrink-0 mt-0.5">
+                <div className={`w-3 h-3 rounded-full ${dotCls}`} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap mb-2">
+                  <span className={`px-2 py-0.5 text-[10px] font-bold rounded ${severityBadge(issue.severity)}`}>
+                    {issue.severity}
+                  </span>
+                  <span className={`px-2 py-0.5 text-[10px] border rounded ${categoryBadge(issue.category)}`}>
+                    {issue.category}
+                  </span>
+                  {issue.elementType && (
+                    <span className="px-2 py-0.5 text-[10px] border border-white/10 rounded text-white/40">
+                      {issue.elementType}
+                    </span>
+                  )}
+                  <span className="px-2 py-0.5 text-[10px] border border-white/10 rounded text-white/40 ml-auto">
+                    {issue.siteNameAr || issue.siteName}
+                  </span>
+                </div>
+
+                <p className="text-sm font-semibold text-white mb-1.5">{issue.title}</p>
+
+                {issue.description && (
+                  <div className="bg-black/30 rounded-lg px-3 py-2 mb-3">
+                    <p className="text-xs text-red-300/90 font-mono leading-relaxed break-words line-clamp-3">
+                      {issue.description}
+                    </p>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
+                  {issue.page && (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[hsl(var(--muted-foreground))]">Page:</span>
+                      <span className="text-white/70 font-mono truncate">{issue.page}</span>
+                    </div>
+                  )}
+                  {issue.responseTimeMs !== null && issue.responseTimeMs !== undefined && (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[hsl(var(--muted-foreground))]">Response:</span>
+                      <span className={`font-mono ${issue.responseTimeMs > 5000 ? "text-red-400" : issue.responseTimeMs > 2000 ? "text-yellow-400" : "text-white/70"}`}>
+                        {(issue.responseTimeMs / 1000).toFixed(1)}s
+                      </span>
+                    </div>
+                  )}
+                  {issue.urlBefore && issue.urlAfter && issue.urlBefore !== issue.urlAfter && (
+                    <div className="col-span-2 flex items-center gap-1.5">
+                      <span className="text-[hsl(var(--muted-foreground))]">URL changed:</span>
+                      <span className="text-white/50 font-mono truncate text-[11px]">
+                        {(() => { try { return new URL(issue.urlBefore).pathname; } catch { return issue.urlBefore; } })()}
+                      </span>
+                      <span className="text-[hsl(var(--muted-foreground))]">&rarr;</span>
+                      <span className="text-white/70 font-mono truncate text-[11px]">
+                        {(() => { try { return new URL(issue.urlAfter).pathname; } catch { return issue.urlAfter; } })()}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {issue.screenshotAfter && (
+                <div className="shrink-0 w-28 h-18 rounded-lg overflow-hidden border border-white/10 bg-black/40">
+                  <img
+                    src={`/api/artifacts/${issue.screenshotAfter.replace(/^.*?artifacts[\\/]/, "")}`}
+                    alt="Error screenshot"
+                    className="w-full h-full object-cover"
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </section>
+  );
+}
+
 // ─── Overview Tab ─────────────────────────────────────────────────────────────
 
-function OverviewTab({ data, runs }: { data: DashboardData | null; runs: MockRun[] }) {
+function OverviewTab({ data, runs, onRefresh }: { data: DashboardData | null; runs: MockRun[]; onRefresh?: () => void }) {
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  function handleSiteRemoved() {
+    setRefreshKey((k) => k + 1);
+    onRefresh?.();
+  }
+
   if (!data) return null;
   const { ministryCards, complianceScore, totalActiveIncidents, trend } = data;
 
-  const totalScans = runs.length + data.totalSites * 3;
-  const avgScore = runs.length > 0
-    ? Math.round(runs.reduce((s, r) => s + scoreFromRun(r), 0) / runs.length)
+  const totalScans = runs.length;
+  const avgScore = ministryCards.length > 0
+    ? Math.round(ministryCards.reduce((s, c) => s + (c.successRate ?? 0), 0) / ministryCards.length)
     : complianceScore;
 
   const siteScores = ministryCards.map((c) => ({
     name: c.name,
     url: c.baseUrl,
-    score: Math.round((c.successRate ?? 50) * 0.9 + 5),
+    score: c.successRate ?? 0,
     rag: c.rag,
   }));
 
@@ -900,7 +1085,7 @@ function OverviewTab({ data, runs }: { data: DashboardData | null; runs: MockRun
         <KpiCard icon={<Globe className="w-5 h-5 text-[hsl(var(--muted-foreground))]" />}
           label="Total Sites" value={data.totalSites} change={null} sub="Actively monitored" />
         <KpiCard icon={<BarChart2 className="w-5 h-5 text-[hsl(var(--muted-foreground))]" />}
-          label="Total Scans" value={totalScans} change={-8} sub="Last 30 days" />
+          label="Total Scans" value={totalScans} change={null} sub="Last 30 days" />
         <KpiCard icon={<CheckCircle2 className="w-5 h-5 text-[hsl(var(--muted-foreground))]" />}
           label="Average Score" value={avgScore} change={trend} sub="Across all sites" />
         <KpiCard icon={<AlertTriangle className="w-5 h-5 text-[hsl(var(--muted-foreground))]" />}
@@ -908,11 +1093,14 @@ function OverviewTab({ data, runs }: { data: DashboardData | null; runs: MockRun
           change={totalActiveIncidents > 0 ? null : 0} sub="Needs attention" />
       </div>
 
+      {/* ── Critical Issues ── */}
+      <CriticalIssuesSection refreshKey={refreshKey} />
+
       {/* ── Site Cards ── */}
       <section>
         <h2 className="text-sm font-semibold text-white mb-4">Monitored Sites</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {ministryCards.map((card) => <SiteCard key={card.siteId} card={card} />)}
+          {ministryCards.map((card) => <SiteCard key={card.siteId} card={card} onRemove={handleSiteRemoved} />)}
           <Link href="/gov/sites/new"
             className="bg-[hsl(var(--card))] border-2 border-dashed border-white/10 rounded-xl p-4 flex flex-col items-center justify-center gap-2 text-[hsl(var(--muted-foreground))] hover:border-white/20 hover:text-white transition-colors min-h-[300px]">
             <Plus className="w-6 h-6" />
@@ -1024,48 +1212,7 @@ function OverviewTab({ data, runs }: { data: DashboardData | null; runs: MockRun
         </section>
 
         {/* Issue Categories */}
-        <section className="bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-xl p-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-sm font-semibold text-white">Issue Categories</h2>
-              <p className="text-xs text-[hsl(var(--muted-foreground))] mt-0.5">Distribution across all sites</p>
-            </div>
-            <button className="p-1 rounded hover:bg-white/5">
-              <MoreHorizontal className="w-4 h-4 text-[hsl(var(--muted-foreground))]" />
-            </button>
-          </div>
-          {/* Bar chart */}
-          <div className="flex items-end gap-2 h-24">
-            {[
-              { label: "UX", pct: 35 },
-              { label: "QA", pct: 28 },
-              { label: "Access.", pct: 22 },
-              { label: "Perf.", pct: 15 },
-            ].map(({ label, pct }) => (
-              <div key={label} className="flex-1 flex flex-col items-center gap-1">
-                <div className="w-full bg-white rounded-sm min-h-[4px]" style={{ height: `${pct * 2.4}px` }} />
-                <span className="text-[10px] text-[hsl(var(--muted-foreground))]">{label}</span>
-              </div>
-            ))}
-          </div>
-          {/* List */}
-          <div className="space-y-2.5">
-            {[
-              { label: "UX", pct: 35 },
-              { label: "QA", pct: 28 },
-              { label: "Accessibility", pct: 22 },
-              { label: "Performance", pct: 15 },
-            ].map(({ label, pct }) => (
-              <div key={label} className="flex items-center gap-3">
-                <span className="text-xs text-[hsl(var(--muted-foreground))] w-20">{label}</span>
-                <div className="flex-1 h-1 bg-white/10 rounded-full overflow-hidden">
-                  <div className="h-full bg-white/60 rounded-full" style={{ width: `${pct}%` }} />
-                </div>
-                <span className="text-xs text-[hsl(var(--muted-foreground))] w-7 text-right">{pct}%</span>
-              </div>
-            ))}
-          </div>
-        </section>
+        <IssueCategoriesCard categories={data?.issueCategories} />
       </div>
 
       {/* ── All Scans Table ── */}
@@ -1431,10 +1578,658 @@ function BriefModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+// ─── KPI Dashboard Tab ───────────────────────────────────────────────────────
+
+interface PlatformKPI {
+  siteId: string;
+  name: string;
+  nameAr: string | null;
+  baseUrl: string;
+  ministryName: string | null;
+  rag: string;
+  availability24h: number | null;
+  availability72h: number | null;
+  availability7d: number | null;
+  avgResponseMs: number | null;
+  peakResponseMs: number | null;
+  siteMttrMs: number | null;
+  siteMttdMs: number | null;
+  totalOutageMs: number | null;
+  longestOutageMs: number | null;
+  activeIncidents: number;
+  totalIncidents30d: number;
+  resolvedIncidents30d: number;
+  lastRunAt: string | null;
+  lastRunStatus: string | null;
+  totalRuns24h: number;
+  totalRuns7d: number;
+  completedRuns24h: number;
+  completedRuns7d: number;
+}
+
+interface KPISummary {
+  totalSites: number;
+  healthyCount: number;
+  degradedCount: number;
+  downCount: number;
+  unknownCount: number;
+  overallAvailability: number | null;
+  totalActiveIncidents: number;
+  globalMttrMs: number | null;
+  avgScanIntervalMin: number;
+  totalPlatformOutageMs: number | null;
+  totalResolvedIncidents30d: number;
+}
+
+function fmtMs(ms: number | null): string {
+  if (ms === null) return "—";
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+  if (ms < 3600000) return `${Math.round(ms / 60000)}m`;
+  return `${(ms / 3600000).toFixed(1)}h`;
+}
+
+function fmtDuration(ms: number | null): string {
+  if (ms === null || ms === 0) return "—";
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  if (h < 24) return rm > 0 ? `${h}h ${rm}m` : `${h}h`;
+  const d = Math.floor(h / 24);
+  const rh = h % 24;
+  return rh > 0 ? `${d}d ${rh}h` : `${d}d`;
+}
+
+function AvailabilityGauge({ pct, size = 80, label }: { pct: number | null; size?: number; label?: string }) {
+  const r = (size - 10) / 2;
+  const circ = 2 * Math.PI * r;
+  const val = pct ?? 0;
+  const dash = (val / 100) * circ;
+  const color = val >= 95 ? "#22c55e" : val >= 80 ? "#eab308" : val >= 50 ? "#f97316" : "#ef4444";
+  const textCls = val >= 95 ? "text-green-400" : val >= 80 ? "text-yellow-400" : val >= 50 ? "text-orange-400" : "text-red-400";
+  const fontSize = size >= 100 ? "text-2xl" : size >= 70 ? "text-lg" : "text-sm";
+
+  return (
+    <div className="relative flex flex-col items-center" style={{ width: size }}>
+      <div style={{ width: size, height: size }}>
+        <svg width={size} height={size} className="-rotate-90" style={{ display: "block" }}>
+          <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth={5} />
+          {val > 0 && (
+            <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={5}
+              strokeLinecap="round" strokeDasharray={`${dash} ${circ - dash}`}
+              style={{ transition: "stroke-dasharray 0.8s ease" }} />
+          )}
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center" style={{ width: size, height: size }}>
+          <span className={`${fontSize} font-black leading-none ${textCls}`}>
+            {pct !== null ? `${pct}%` : "—"}
+          </span>
+        </div>
+      </div>
+      {label && <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1.5 text-center">{label}</p>}
+    </div>
+  );
+}
+
+function KPIDashboardTab() {
+  const [summary, setSummary] = useState<KPISummary | null>(null);
+  const [platforms, setPlatforms] = useState<PlatformKPI[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+
+  function loadData() {
+    fetch("/api/gov/kpi-dashboard")
+      .then((r) => r.json())
+      .then((d) => {
+        setSummary(d.summary ?? null);
+        setPlatforms(d.platforms ?? []);
+        setLastRefresh(new Date());
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    loadData();
+    const iv = setInterval(loadData, 30000);
+    return () => clearInterval(iv);
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="space-y-4 animate-pulse">
+        <div className="grid grid-cols-6 gap-3">{[1, 2, 3, 4, 5, 6].map((i) => <div key={i} className="h-28 bg-white/5 rounded-xl" />)}</div>
+        <div className="h-96 bg-white/5 rounded-xl" />
+      </div>
+    );
+  }
+
+  if (!summary) return <p className="text-sm text-[hsl(var(--muted-foreground))]">Failed to load data</p>;
+
+  const ragDot = (rag: string) =>
+    rag === "green" ? "bg-green-500" : rag === "yellow" ? "bg-yellow-500" : rag === "red" ? "bg-red-500" : "bg-gray-500";
+  const ragText = (rag: string) =>
+    rag === "green" ? "text-green-400" : rag === "yellow" ? "text-yellow-400" : rag === "red" ? "text-red-400" : "text-gray-400";
+  const ragLabel = (rag: string) =>
+    rag === "green" ? "Healthy" : rag === "yellow" ? "Degraded" : rag === "red" ? "Down" : "Unknown";
+  const ragBg = (rag: string) =>
+    rag === "green" ? "bg-green-500/10 border-green-500/20" : rag === "yellow" ? "bg-yellow-500/10 border-yellow-500/20" : rag === "red" ? "bg-red-500/10 border-red-500/20" : "bg-gray-500/10 border-gray-500/20";
+
+  const sortedByAvailability = [...platforms].sort((a, b) => (b.availability24h ?? -1) - (a.availability24h ?? -1));
+  const sortedByResponse = [...platforms].sort((a, b) => (a.avgResponseMs ?? 999999) - (b.avgResponseMs ?? 999999));
+
+  return (
+    <div className="space-y-6">
+
+      {/* ── Header ── */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-lg font-bold text-white">Performance KPI Dashboard — Monitoring Center</h1>
+          <p className="text-xs text-[hsl(var(--muted-foreground))] mt-0.5">
+            Real-time data — Last updated {lastRefresh ? lastRefresh.toLocaleTimeString("en-US") : "now"}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-green-900/30 border border-green-700/30">
+            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+            <span className="text-[11px] text-green-400 font-semibold">LIVE</span>
+          </div>
+        </div>
+      </div>
+
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+      {/* SECTION 1: Platform & Digital Services Status                        */}
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+
+      <section className="bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-[hsl(var(--border))]">
+          <h2 className="text-sm font-bold text-white">1. Platform & Digital Services Status</h2>
+          <p className="text-xs text-[hsl(var(--muted-foreground))] mt-0.5">Real-time status of all monitored platforms</p>
+        </div>
+
+        {/* Status summary chips */}
+        <div className="px-5 py-3 flex items-center gap-3 border-b border-[hsl(var(--border))] bg-white/[0.01]">
+          <div className="flex items-center gap-4 text-xs">
+            <span className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-full bg-green-500" />
+              <span className="text-white font-semibold">{summary.healthyCount}</span>
+              <span className="text-[hsl(var(--muted-foreground))]">Healthy</span>
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-full bg-yellow-500" />
+              <span className="text-white font-semibold">{summary.degradedCount}</span>
+              <span className="text-[hsl(var(--muted-foreground))]">Degraded</span>
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-full bg-red-500" />
+              <span className="text-white font-semibold">{summary.downCount}</span>
+              <span className="text-[hsl(var(--muted-foreground))]">Down</span>
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-full bg-gray-500" />
+              <span className="text-white font-semibold">{summary.unknownCount}</span>
+              <span className="text-[hsl(var(--muted-foreground))]">Unknown</span>
+            </span>
+          </div>
+          <div className="ml-auto text-[10px] text-[hsl(var(--muted-foreground))]">
+            Total: {summary.totalSites} platforms
+          </div>
+        </div>
+
+        {/* Platform status cards grid */}
+        <div className="p-5 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          {platforms.map((p) => (
+            <div key={p.siteId} className={`rounded-xl border p-3 ${ragBg(p.rag)} transition-all`}>
+              <div className="flex items-center gap-2 mb-2">
+                <span className={`w-2.5 h-2.5 rounded-full ${ragDot(p.rag)} ${p.rag !== "green" && p.rag !== "unknown" ? "animate-pulse" : ""}`} />
+                <span className={`text-[11px] font-bold ${ragText(p.rag)}`}>{ragLabel(p.rag)}</span>
+              </div>
+              <p className="text-sm font-bold text-white leading-tight">{p.name}</p>
+              <p className="text-[10px] text-[hsl(var(--muted-foreground))] font-mono mt-0.5">{p.baseUrl.replace(/^https?:\/\//, "")}</p>
+              {p.ministryName && <p className="text-[9px] text-[hsl(var(--muted-foreground))] mt-0.5">{p.ministryName}</p>}
+              <div className="flex items-center justify-between mt-2 pt-2 border-t border-white/5">
+                <span className="text-[9px] text-[hsl(var(--muted-foreground))]">Last scan</span>
+                <span className="text-[10px] text-white/70">{timeAgo(p.lastRunAt)}</span>
+              </div>
+              {p.activeIncidents > 0 && (
+                <div className="flex items-center gap-1 mt-1.5">
+                  <AlertTriangle className="w-3 h-3 text-red-400" />
+                  <span className="text-[10px] text-red-400 font-semibold">{p.activeIncidents} open incidents</span>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+      {/* SECTION 2: Availability Rates                                        */}
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+
+      <section className="bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-[hsl(var(--border))]">
+          <h2 className="text-sm font-bold text-white">2. Availability Rate per Platform</h2>
+          <p className="text-xs text-[hsl(var(--muted-foreground))] mt-0.5">Percentage of time each platform is operational and accessible</p>
+        </div>
+
+        {/* Overall availability gauge */}
+        <div className="px-5 py-5 flex items-center gap-8 border-b border-[hsl(var(--border))] bg-white/[0.01]">
+          <AvailabilityGauge pct={summary.overallAvailability} size={100} />
+          <div>
+            <p className="text-xs text-[hsl(var(--muted-foreground))]">Overall Availability — Last 24 Hours</p>
+            <p className="text-3xl font-black text-white mt-1">
+              {summary.overallAvailability !== null ? `${summary.overallAvailability}%` : "—"}
+            </p>
+            <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
+              Average availability across all monitored platforms
+            </p>
+          </div>
+        </div>
+
+        {/* Per-platform availability with gauges */}
+        <div className="p-5">
+          <div className="grid grid-cols-5 gap-4 mb-6">
+            {sortedByAvailability.slice(0, 10).map((p) => (
+              <div key={p.siteId} className="flex flex-col items-center gap-1">
+                <AvailabilityGauge pct={p.availability24h} size={64} />
+                <p className="text-[10px] text-white/80 font-medium text-center mt-1">{p.name}</p>
+                <p className="text-[9px] text-[hsl(var(--muted-foreground))]">24h</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Availability comparison bars: 24h vs 72h vs 7d */}
+          <div className="space-y-4 mt-4">
+            <p className="text-xs text-[hsl(var(--muted-foreground))] font-medium">Availability Comparison: 24h | 72h | 7 days</p>
+            {platforms.map((p) => {
+              const bars = [
+                { label: "24h", val: p.availability24h, color: "bg-emerald-500" },
+                { label: "72h", val: p.availability72h, color: "bg-blue-500" },
+                { label: "7d", val: p.availability7d, color: "bg-purple-500" },
+              ];
+              return (
+                <div key={p.siteId} className="flex items-center gap-3">
+                  <span className="text-xs text-white/80 w-24 truncate font-medium">{p.name}</span>
+                  <div className="flex-1 space-y-1">
+                    {bars.map((b) => (
+                      <div key={b.label} className="flex items-center gap-2">
+                        <span className="text-[9px] text-[hsl(var(--muted-foreground))] w-6">{b.label}</span>
+                        <div className="flex-1 h-1.5 bg-white/5 rounded-full overflow-hidden">
+                          <div className={`h-full rounded-full ${b.color} transition-all duration-700`} style={{ width: `${b.val ?? 0}%` }} />
+                        </div>
+                        <span className={`text-[10px] w-8 text-left font-bold tabular-nums ${
+                          b.val === null ? "text-gray-500" : b.val >= 95 ? "text-green-400" : b.val >= 80 ? "text-yellow-400" : "text-red-400"
+                        }`}>
+                          {b.val !== null ? `${b.val}%` : "—"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+      {/* SECTION 3: Mean Time to Recovery & Outage Duration                   */}
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+
+      <section className="bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-[hsl(var(--border))]">
+          <h2 className="text-sm font-bold text-white">3. Mean Time to Recovery & Outage Duration</h2>
+          <p className="text-xs text-[hsl(var(--muted-foreground))] mt-0.5">Fault detection and service recovery metrics — Last 30 days</p>
+        </div>
+
+        {/* Global MTTR/MTTD summary */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 p-5 border-b border-[hsl(var(--border))]">
+          <div className="bg-white/[0.03] rounded-xl p-4 text-center">
+            <p className="text-[10px] text-[hsl(var(--muted-foreground))] uppercase tracking-wider font-medium mb-2">Mean Time to Recovery</p>
+            <p className="text-xl font-black text-white">{fmtMs(summary.globalMttrMs)}</p>
+            <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">MTTR</p>
+          </div>
+          <div className="bg-white/[0.03] rounded-xl p-4 text-center">
+            <p className="text-[10px] text-[hsl(var(--muted-foreground))] uppercase tracking-wider font-medium mb-2">Scan Interval (Detection)</p>
+            <p className="text-xl font-black text-white">{summary.avgScanIntervalMin} min</p>
+            <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">MTTD</p>
+          </div>
+          <div className="bg-white/[0.03] rounded-xl p-4 text-center">
+            <p className="text-[10px] text-[hsl(var(--muted-foreground))] uppercase tracking-wider font-medium mb-2">Total Outage Duration</p>
+            <p className="text-xl font-black text-white">{fmtDuration(summary.totalPlatformOutageMs)}</p>
+            <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">All platforms — 30 days</p>
+          </div>
+          <div className="bg-white/[0.03] rounded-xl p-4 text-center">
+            <p className="text-[10px] text-[hsl(var(--muted-foreground))] uppercase tracking-wider font-medium mb-2">Resolved Incidents</p>
+            <p className="text-xl font-black text-green-400">{summary.totalResolvedIncidents30d}</p>
+            <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">Last 30 days</p>
+          </div>
+        </div>
+
+        {/* Per-platform MTTR / outage table */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-[hsl(var(--border))]">
+                {["Platform", "Recovery (MTTR)", "Detection (MTTD)", "Total Outage", "Longest Outage", "Incidents (30d)", "Resolved"].map((h) => (
+                  <th key={h} className="px-4 py-3 text-left text-[10px] font-bold text-[hsl(var(--muted-foreground))] uppercase tracking-wider">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[hsl(var(--border))]">
+              {platforms.map((p) => (
+                <tr key={p.siteId} className="hover:bg-white/[0.02] transition-colors">
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full ${ragDot(p.rag)}`} />
+                      <span className="text-sm font-semibold text-white">{p.name}</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`text-xs font-bold tabular-nums ${
+                      p.siteMttrMs === null ? "text-gray-500" :
+                      p.siteMttrMs < 3600000 ? "text-green-400" :
+                      p.siteMttrMs < 86400000 ? "text-yellow-400" : "text-red-400"
+                    }`}>
+                      {fmtDuration(p.siteMttrMs)}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="text-xs font-mono text-white/70">{fmtMs(p.siteMttdMs)}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`text-xs font-bold ${p.totalOutageMs ? "text-red-400" : "text-green-400"}`}>
+                      {fmtDuration(p.totalOutageMs)}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="text-xs text-white/70">{fmtDuration(p.longestOutageMs)}</span>
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <span className={`text-sm font-bold ${p.totalIncidents30d > 0 ? "text-orange-400" : "text-green-400"}`}>
+                      {p.totalIncidents30d}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <span className="text-sm font-bold text-green-400">{p.resolvedIncidents30d}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+      {/* SECTION 4: Performance & Resource KPIs                               */}
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+
+      <section className="bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-[hsl(var(--border))]">
+          <h2 className="text-sm font-bold text-white">4. Performance & Resource Metrics</h2>
+          <p className="text-xs text-[hsl(var(--muted-foreground))] mt-0.5">Average and peak response times and scan volume per platform</p>
+        </div>
+
+        {/* Global perf summary */}
+        <div className="grid grid-cols-3 gap-4 p-5 border-b border-[hsl(var(--border))]">
+          {(() => {
+            const allAvg = platforms.filter((p) => p.avgResponseMs !== null).map((p) => p.avgResponseMs!);
+            const globalAvg = allAvg.length > 0 ? Math.round(allAvg.reduce((a, b) => a + b, 0) / allAvg.length) : null;
+            const allPeak = platforms.filter((p) => p.peakResponseMs !== null).map((p) => p.peakResponseMs!);
+            const globalPeak = allPeak.length > 0 ? Math.max(...allPeak) : null;
+            const totalScans = platforms.reduce((s, p) => s + p.totalRuns24h, 0);
+            return (
+              <>
+                <div className="bg-white/[0.03] rounded-xl p-4 text-center">
+                  <p className="text-[10px] text-[hsl(var(--muted-foreground))] uppercase tracking-wider font-medium mb-2">Avg Response Time</p>
+                  <p className={`text-2xl font-black ${
+                    globalAvg === null ? "text-gray-500" : globalAvg < 3000 ? "text-green-400" : globalAvg < 8000 ? "text-yellow-400" : "text-red-400"
+                  }`}>{fmtMs(globalAvg)}</p>
+                  <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">All platforms — 24h</p>
+                </div>
+                <div className="bg-white/[0.03] rounded-xl p-4 text-center">
+                  <p className="text-[10px] text-[hsl(var(--muted-foreground))] uppercase tracking-wider font-medium mb-2">Peak Response Time</p>
+                  <p className={`text-2xl font-black ${
+                    globalPeak === null ? "text-gray-500" : globalPeak < 5000 ? "text-green-400" : globalPeak < 15000 ? "text-yellow-400" : "text-red-400"
+                  }`}>{fmtMs(globalPeak)}</p>
+                  <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">Highest recorded — 24h</p>
+                </div>
+                <div className="bg-white/[0.03] rounded-xl p-4 text-center">
+                  <p className="text-[10px] text-[hsl(var(--muted-foreground))] uppercase tracking-wider font-medium mb-2">Total Scans</p>
+                  <p className="text-2xl font-black text-white">{totalScans}</p>
+                  <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">Last 24 hours</p>
+                </div>
+              </>
+            );
+          })()}
+        </div>
+
+        {/* Response time visual bars */}
+        <div className="p-5 space-y-4">
+          <p className="text-xs text-[hsl(var(--muted-foreground))] font-medium mb-3">Response Time per Platform (Avg | Peak)</p>
+
+          {sortedByResponse.map((p) => {
+            const avgMs = p.avgResponseMs ?? 0;
+            const peakMs = p.peakResponseMs ?? 0;
+            const maxScale = 30000;
+            const avgPct = Math.min((avgMs / maxScale) * 100, 100);
+            const peakPct = Math.min((peakMs / maxScale) * 100, 100);
+            const avgColor = avgMs < 3000 ? "bg-green-500" : avgMs < 8000 ? "bg-yellow-500" : "bg-red-500";
+            const peakColor = avgMs < 3000 ? "bg-green-500/30" : avgMs < 8000 ? "bg-yellow-500/30" : "bg-red-500/30";
+            return (
+              <div key={p.siteId} className="flex items-center gap-3">
+                <span className="text-xs text-white/80 w-24 truncate font-medium">{p.name}</span>
+                <div className="flex-1 relative">
+                  <div className="h-3 bg-white/5 rounded-full overflow-hidden relative">
+                    <div className={`absolute inset-y-0 left-0 rounded-full ${peakColor} transition-all duration-500`} style={{ width: `${peakPct}%` }} />
+                    <div className={`absolute inset-y-0 left-0 rounded-full ${avgColor} transition-all duration-700`} style={{ width: `${avgPct}%` }} />
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 w-32">
+                  <span className={`text-[10px] font-bold tabular-nums ${
+                    p.avgResponseMs === null ? "text-gray-500" : avgMs < 3000 ? "text-green-400" : avgMs < 8000 ? "text-yellow-400" : "text-red-400"
+                  }`}>
+                    {fmtMs(p.avgResponseMs)}
+                  </span>
+                  <span className="text-[9px] text-[hsl(var(--muted-foreground))]">/</span>
+                  <span className="text-[10px] text-white/50 tabular-nums">{fmtMs(p.peakResponseMs)}</span>
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Legend */}
+          <div className="flex items-center gap-4 pt-2 border-t border-white/5 text-[10px] text-[hsl(var(--muted-foreground))]">
+            <span className="flex items-center gap-1.5"><span className="w-3 h-1.5 rounded-full bg-green-500" /> Avg Response</span>
+            <span className="flex items-center gap-1.5"><span className="w-3 h-1.5 rounded-full bg-green-500/30" /> Peak Response</span>
+          </div>
+        </div>
+
+        {/* Scan volume per platform */}
+        <div className="px-5 pb-5">
+          <p className="text-xs text-[hsl(var(--muted-foreground))] font-medium mb-3">Scan Volume per Platform</p>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+            {platforms.map((p) => (
+              <div key={p.siteId} className="bg-white/[0.03] rounded-lg p-3 text-center">
+                <p className="text-[10px] text-[hsl(var(--muted-foreground))] truncate mb-1">{p.name}</p>
+                <div className="flex items-baseline justify-center gap-1">
+                  <p className="text-lg font-bold text-white tabular-nums">{p.totalRuns24h}</p>
+                  <p className="text-[9px] text-[hsl(var(--muted-foreground))]">/ 24h</p>
+                </div>
+                <p className="text-[9px] text-[hsl(var(--muted-foreground))] mt-0.5">{p.totalRuns7d} scans / 7d</p>
+                <div className="h-1 bg-white/5 rounded-full mt-2 overflow-hidden">
+                  <div className="h-full rounded-full bg-blue-500/60 transition-all" style={{ width: `${p.completedRuns24h > 0 ? 100 : 0}%` }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+    </div>
+  );
+}
+
+// ─── Issue Categories Card ────────────────────────────────────────────────────
+
+function IssueCategoriesCard({ categories }: { categories?: IssueCategory[] }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [sortBy, setSortBy] = useState<"pct" | "count">("pct");
+  const [expanded, setExpanded] = useState(false);
+
+  const cats = categories?.length
+    ? [...categories].sort((a, b) => sortBy === "pct" ? b.pct - a.pct : b.count - a.count)
+    : [
+        { label: "UX", count: 0, pct: 0 },
+        { label: "QA", count: 0, pct: 0 },
+        { label: "Accessibility", count: 0, pct: 0 },
+        { label: "Performance", count: 0, pct: 0 },
+      ];
+
+  const shortLabel: Record<string, string> = { Accessibility: "Access.", Performance: "Perf." };
+  const barColors: Record<string, string> = {
+    UX: "bg-purple-400",
+    QA: "bg-cyan-400",
+    Accessibility: "bg-blue-400",
+    Performance: "bg-orange-400",
+  };
+  const textColors: Record<string, string> = {
+    UX: "text-purple-400",
+    QA: "text-cyan-400",
+    Accessibility: "text-blue-400",
+    Performance: "text-orange-400",
+  };
+  const descriptions: Record<string, string> = {
+    UX: "Navigation, buttons, links, tabs, and menus that are broken or unresponsive",
+    QA: "Form inputs, search, data display, and general functional issues",
+    Accessibility: "Missing labels, poor contrast, focus issues, and ARIA violations",
+    Performance: "Slow responses (>3s), timeouts, and network errors",
+  };
+  const totalIssues = cats.reduce((s, c) => s + c.count, 0);
+  const maxPct = Math.max(...cats.map((c) => c.pct), 1);
+
+  const fmtPct = (pct: number, count: number) => {
+    if (count === 0) return "0%";
+    if (pct < 1) return "<1%";
+    return `${pct}%`;
+  };
+
+  return (
+    <section className="bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-xl p-5 space-y-4 relative">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-sm font-semibold text-white">Issue Categories</h2>
+          <p className="text-xs text-[hsl(var(--muted-foreground))] mt-0.5">
+            Distribution across all sites (latest scan)
+          </p>
+        </div>
+        <div className="relative">
+          <button
+            onClick={() => setMenuOpen(!menuOpen)}
+            className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+          >
+            <MoreHorizontal className="w-4 h-4 text-[hsl(var(--muted-foreground))]" />
+          </button>
+          {menuOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
+              <div className="absolute right-0 top-8 z-50 w-48 bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-lg shadow-xl py-1">
+                <button
+                  onClick={() => { setSortBy("pct"); setMenuOpen(false); }}
+                  className={`w-full text-left px-3 py-2 text-xs hover:bg-white/5 transition-colors ${sortBy === "pct" ? "text-emerald-400" : "text-white/70"}`}
+                >
+                  Sort by percentage
+                </button>
+                <button
+                  onClick={() => { setSortBy("count"); setMenuOpen(false); }}
+                  className={`w-full text-left px-3 py-2 text-xs hover:bg-white/5 transition-colors ${sortBy === "count" ? "text-emerald-400" : "text-white/70"}`}
+                >
+                  Sort by count
+                </button>
+                <div className="border-t border-[hsl(var(--border))] my-1" />
+                <button
+                  onClick={() => { setExpanded(!expanded); setMenuOpen(false); }}
+                  className="w-full text-left px-3 py-2 text-xs text-white/70 hover:bg-white/5 transition-colors"
+                >
+                  {expanded ? "Collapse details" : "Show details"}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Bar chart */}
+      <div className="flex items-end gap-3 h-28">
+        {cats.map(({ label, pct, count }) => (
+          <div key={label} className="flex-1 flex flex-col items-center gap-1.5">
+            <span className={`text-[11px] font-semibold ${textColors[label] || "text-white/70"}`}>
+              {fmtPct(pct, count)}
+            </span>
+            <div
+              className={`w-full rounded-t-md ${barColors[label] || "bg-white"} transition-all duration-700`}
+              style={{
+                height: `${count > 0 ? Math.max((pct / maxPct) * 80, 8) : 4}px`,
+                opacity: count > 0 ? 1 : 0.15,
+              }}
+            />
+            <span className="text-[10px] text-[hsl(var(--muted-foreground))] font-medium">
+              {shortLabel[label] || label}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* Total */}
+      <div className="flex items-center justify-between px-1">
+        <span className="text-[10px] text-[hsl(var(--muted-foreground))] uppercase tracking-wider font-medium">
+          Total Issues
+        </span>
+        <span className="text-sm font-bold text-white">{totalIssues}</span>
+      </div>
+
+      {/* List */}
+      <div className="space-y-3">
+        {cats.map(({ label, pct, count }) => (
+          <div key={label}>
+            <div className="flex items-center gap-3">
+              <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${barColors[label] || "bg-white"}`} />
+              <span className="text-xs text-white/80 w-24 font-medium">{label}</span>
+              <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-700 ${barColors[label] || "bg-white/60"}`}
+                  style={{ width: `${count > 0 ? Math.max(pct, 2) : 0}%` }}
+                />
+              </div>
+              <span className={`text-xs w-8 text-right font-semibold ${textColors[label] || "text-white/70"}`}>
+                {fmtPct(pct, count)}
+              </span>
+              <span className="text-[11px] text-[hsl(var(--muted-foreground))] w-8 text-right tabular-nums">
+                {count}
+              </span>
+            </div>
+            {/* Expanded description */}
+            {expanded && (
+              <p className="text-[11px] text-[hsl(var(--muted-foreground))] ml-[22px] mt-1">
+                {descriptions[label] || ""}
+              </p>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "overview", label: "Overview" },
+  { id: "kpi", label: "KPI Dashboard" },
   { id: "alerts", label: "Alerts" },
   { id: "directives", label: "Directives" },
 ];
@@ -1447,7 +2242,7 @@ export default function GovHomePage() {
   const [userName, setUserName] = useState<string>("");
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  function refreshData() {
     Promise.all([
       fetch("/api/gov/dashboard").then((r) => r.json()),
       fetch("/api/gov/runs").then((r) => r.json()),
@@ -1464,8 +2259,8 @@ export default function GovHomePage() {
           totalActiveIncidents: dash.totalActiveIncidents ?? 0,
           ministryCards: cards,
           trend: dash.trend ?? null,
+          issueCategories: dash.issueCategories ?? [],
         });
-        // Real runs from DB
         const realRuns: MockRun[] = (runsData.runs ?? []).map((r: any) => ({
           id: r.id,
           siteId: r.site.id,
@@ -1484,7 +2279,9 @@ export default function GovHomePage() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, []);
+  }
+
+  useEffect(() => { refreshData(); }, []);
 
   return (
     <div className="p-6 space-y-6 max-w-[1400px]">
@@ -1525,7 +2322,8 @@ export default function GovHomePage() {
         </div>
       ) : (
         <>
-          {tab === "overview" && <OverviewTab data={data} runs={runs} />}
+          {tab === "overview" && <OverviewTab data={data} runs={runs} onRefresh={refreshData} />}
+          {tab === "kpi" && <KPIDashboardTab />}
           {tab === "alerts" && <AlertsTab />}
           {tab === "directives" && <DirectivesTab />}
         </>

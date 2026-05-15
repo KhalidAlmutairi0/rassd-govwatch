@@ -60,7 +60,7 @@ function stepToActivity(step: StepStatus): ActivityEntry {
     detect_forms: "warn",
   };
   const typeMap: Record<string, "info" | "warn" | "success" | "error"> = {
-    passed: "info",
+    passed: "success",
     failed: "error",
     running: "info",
     pending: "info",
@@ -201,7 +201,13 @@ export default function LiveViewPage() {
           runStatusRef.current = data.status || "completed";
           setRunStatus(data.status || "completed");
           if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-          setTimeout(() => router.push(`/report/${runId}`), 2000);
+          setSteps((prev) =>
+            prev.map((s) =>
+              s.status === "pending" || s.status === "running"
+                ? { ...s, status: "skipped" as const }
+                : s
+            )
+          );
           break;
       }
     };
@@ -412,16 +418,23 @@ export default function LiveViewPage() {
 
       {/* Footer */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1.5 text-sm text-[hsl(var(--muted-foreground))]">
-          <Clock className="w-4 h-4" />
-          Estimated time remaining: ~{Math.max(0, 2 - Math.floor(elapsed / 30))} min
-        </div>
+        {!isComplete ? (
+          <div className="flex items-center gap-1.5 text-sm text-[hsl(var(--muted-foreground))]">
+            <Clock className="w-4 h-4" />
+            Estimated time remaining: ~{Math.max(0, 2 - Math.floor(elapsed / 30))} min
+          </div>
+        ) : (
+          <div className="flex items-center gap-1.5 text-sm text-emerald-400">
+            <CheckCircle2 className="w-4 h-4" />
+            Scan finished — {completedSteps} of {totalSteps} elements tested
+          </div>
+        )}
         {isComplete && (
           <button
             onClick={() => router.push(`/report/${runId}`)}
-            className="px-4 py-2 text-sm font-medium rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white transition-colors"
+            className="px-5 py-2.5 text-sm font-semibold rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white transition-colors shadow-lg shadow-emerald-900/30"
           >
-            View Results
+            View Report
           </button>
         )}
       </div>

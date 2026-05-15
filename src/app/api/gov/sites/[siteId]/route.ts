@@ -7,7 +7,7 @@ import { getLatestScore, getGrade, getScoreColor, getScoreHistory } from "@/lib/
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { siteId: string } }
+  { params }: { params: Promise<{ siteId: string }> }
 ) {
   try {
     const user = await getCurrentUser();
@@ -15,7 +15,7 @@ export async function GET(
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
 
-    const { siteId } = params;
+    const { siteId } = await params;
 
     const site = await prisma.site.findUnique({
       where: { id: siteId },

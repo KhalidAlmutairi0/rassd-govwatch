@@ -5,16 +5,20 @@ import { prisma } from "@/lib/prisma";
 // GET /api/sites/[id]/runs/[runId] - Get run details
 export async function GET(
   request: Request,
-  { params }: { params: { id: string; runId: string } }
+  { params }: { params: Promise<{ id: string; runId: string }> }
 ) {
   try {
+    const { runId } = await params;
     const run = await prisma.run.findUnique({
-      where: { id: params.runId },
+      where: { id: runId },
       include: {
         site: true,
         journey: true,
         steps: {
           orderBy: { stepIndex: "asc" },
+        },
+        elementResults: {
+          orderBy: { createdAt: "asc" },
         },
         artifacts: {
           orderBy: { createdAt: "asc" },

@@ -99,7 +99,7 @@ export default function PageDetailPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch(`/api/sites/temp/runs/${runId}`)
+    fetch(`/api/sites/_/runs/${runId}`)
       .then((r) => r.json())
       .then((d) => {
         const steps: RunStep[] = d.run?.steps ?? [];

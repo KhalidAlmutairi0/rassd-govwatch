@@ -1,26 +1,43 @@
 // src/lib/ws-server.ts
-import { WebSocketServer, WebSocket } from "ws";
+// On Vercel: uses Ably for real-time broadcasting (no persistent WS server)
+// Locally: uses a WebSocket server on a separate port
+
+import { ablyBroadcast, isAblyEnabled } from "./ably-broadcast";
+
+const IS_VERCEL = !!process.env.VERCEL;
+
+// ── Local WebSocket state (only used outside Vercel) ──────────────────────────
+type WS = import("ws").WebSocket;
+type WSServer = import("ws").WebSocketServer;
 
 interface LiveSession {
   runId: string;
-  clients: Set<WebSocket>;
+  clients: Set<WS>;
 }
 
-// Use global to share sessions and server instance across Next.js hot reloads
-const sessions = (global as any).__wsSessions || ((global as any).__wsSessions = new Map<string, LiveSession>());
-let wss: WebSocketServer | null = (global as any).__wsServer || null;
+const sessions: Map<string, LiveSession> = IS_VERCEL
+  ? new Map()
+  : ((global as any).__wsSessions || ((global as any).__wsSessions = new Map()));
 
-export function initWebSocketServer(port: number = 3001) {
+let wss: WSServer | null = IS_VERCEL
+  ? null
+  : ((global as any).__wsServer || null);
+
+// ── Init (local dev only) ─────────────────────────────────────────────────────
+export function initWebSocketServer(port = 3001) {
+  if (IS_VERCEL) return null; // Ably handles this on Vercel
+
   if (wss) {
-    console.log(`WebSocket server already running on ws://localhost:${port}`);
+    console.log(`[WS] WebSocket server init requested on port ${port}`);
     return wss;
   }
 
-  wss = new WebSocketServer({ port });
-  (global as any).__wsServer = wss; // persist across hot reloads
+  const { WebSocketServer } = require("ws") as typeof import("ws");
 
-  // Handle port-in-use gracefully (happens in Next.js dev with multiple processes)
-  wss.on("error", (err: any) => {
+  wss = new WebSocketServer({ port });
+  (global as any).__wsServer = wss;
+
+  wss!.on("error", (err: any) => {
     if (err.code === "EADDRINUSE") {
       console.log(`[WS] Port ${port} already in use — another process has the WS server`);
     } else {
@@ -28,109 +45,80 @@ export function initWebSocketServer(port: number = 3001) {
     }
   });
 
-  wss.on("connection", (ws, req) => {
+  wss!.on("connection", (ws: WS, req: any) => {
     const url = new URL(req.url!, `http://localhost:${port}`);
     const pathParts = url.pathname.split("/");
-    const pathType = pathParts[1]; // "live" or "relay"
+    const pathType = pathParts[1];
     const runId = pathParts[pathParts.length - 1];
 
-    if (!runId) {
-      ws.close(1008, "Missing runId");
-      return;
-    }
+    if (!runId) { ws.close(1008, "Missing runId"); return; }
 
-    // ── RELAY path: /relay/{runId} ──
-    // Used by the Next.js API process to push messages to viewer clients
+    // Relay path: worker pushes messages through here to viewer clients
     if (pathType === "relay") {
-      console.log(`[WS] Relay client connected for run: ${runId}`);
-      ws.on("message", (data) => {
+      ws.on("message", (data: any) => {
         const session = sessions.get(runId);
-        const payload = data.toString();
-        const msgType = (() => { try { return JSON.parse(payload).type; } catch { return "?"; } })();
-        console.log(`[WS] Relay → ${session?.clients.size || 0} viewers for run ${runId} (type: ${msgType})`);
         if (!session) return;
-        for (const client of (session.clients as Set<WebSocket>)) {
-          if (client.readyState === WebSocket.OPEN) {
-            client.send(payload);
-          }
+        const payload = data.toString();
+        for (const client of session.clients) {
+          if ((client as any).readyState === 1) client.send(payload);
         }
       });
       ws.on("error", () => {});
-      return; // Don't add relay clients to viewer sessions
+      return;
     }
 
-    // ── LIVE path: /live/{runId} ──
-    // Used by browser clients watching a run
+    // Live path: browser viewer subscribes
     let session = sessions.get(runId);
     if (!session) {
       session = { runId, clients: new Set() };
       sessions.set(runId, session);
-      console.log(`[WS] Created new session for run: ${runId}`);
     }
     session.clients.add(ws);
 
-    console.log(`Client connected to run: ${runId} (total sessions: ${sessions.size}, clients in this session: ${session.clients.size})`);
-
     ws.on("close", () => {
       session?.clients.delete(ws);
-      if (session?.clients.size === 0) {
-        sessions.delete(runId);
-        console.log(`Session closed for run: ${runId}`);
-      }
+      if (session?.clients.size === 0) sessions.delete(runId);
     });
-
-    ws.on("error", (error) => {
-      console.error(`WebSocket error for run ${runId}:`, error);
-    });
+    ws.on("error", () => {});
   });
 
   console.log(`✅ WebSocket server running on ws://localhost:${port}`);
   return wss;
 }
 
-// Create a persistent relay connection to the worker's WS server.
-// Use this from the Next.js API process to push messages to viewer clients.
-export function createRelayConnection(runId: string, port?: number): WebSocket {
+// ── Relay helper (local dev only) ─────────────────────────────────────────────
+export function createRelayConnection(runId: string, port?: number) {
+  if (IS_VERCEL) return null as any;
+  const { WebSocket } = require("ws") as typeof import("ws");
   const workerPort = port || parseInt(process.env.WORKER_PORT || "3003");
   const relay = new WebSocket(`ws://localhost:${workerPort}/relay/${runId}`);
-  relay.on("error", (err) => {
+  relay.on("error", (err: Error) => {
     console.error(`[RELAY] Connection error for run ${runId}:`, err.message);
   });
   return relay;
 }
 
-// Send one message through a relay connection (fire and forget)
-export function relaySend(relay: WebSocket, message: object) {
-  if (relay.readyState === WebSocket.OPEN) {
+export function relaySend(relay: any, message: object) {
+  if (relay && relay.readyState === 1) {
     relay.send(JSON.stringify(message));
   }
 }
 
-// Broadcast a message to all clients watching a specific run
-export function broadcast(runId: string, message: object) {
-  const session = sessions.get(runId);
-  const allRunIds = Array.from(sessions.keys());
-  console.log(`[BROADCAST] runId=${runId}, hasSession=${!!session}, clientCount=${session?.clients.size || 0}, messageType=${(message as any).type}, allSessions=[${allRunIds.join(', ')}]`);
-  if (!session) return;
+// ── Main broadcast — Ably on Vercel, local WS otherwise ───────────────────────
+export function broadcast(runId: string, message: object): void {
+  if (IS_VERCEL || isAblyEnabled()) {
+    ablyBroadcast(runId, message).catch(() => {});
+    return;
+  }
 
+  const session = sessions.get(runId);
+  if (!session) return;
   const data = JSON.stringify(message);
-  const clients = Array.from(session.clients);
-  for (const client of clients) {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(data);
-      console.log(`[BROADCAST] Sent ${(message as any).type} to client`);
-    }
+  for (const client of session.clients) {
+    if ((client as any).readyState === 1) (client as any).send(data);
   }
 }
 
-// Get WebSocket server instance
 export function getWebSocketServer() {
   return wss;
 }
-
-// Broadcast types:
-// { type: "browser-frame", image: "data:image/jpeg;base64,..." }
-// { type: "step-update", step: { index, action, description, status, durationMs } }
-// { type: "step-log", log: { level, message, timestamp } }
-// { type: "run-status", status: "running" | "passed" | "failed" }
-// { type: "run-complete", summary: { ... } }

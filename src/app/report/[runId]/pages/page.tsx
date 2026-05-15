@@ -50,7 +50,7 @@ export default function DiscoveredPagesPage() {
   const [search, setSearch] = useState("");
 
   useEffect(() => {
-    fetch(`/api/sites/temp/runs/${runId}`)
+    fetch(`/api/sites/_/runs/${runId}`)
       .then((r) => r.json())
       .then((d) => {
         if (d.run?.steps) setPages(derivePages(d.run.steps));

@@ -5,11 +5,12 @@ import { prisma } from "@/lib/prisma";
 // GET /api/sites/[id] - Get single site with details
 export async function GET(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const site = await prisma.site.findUnique({
-      where: { id: params.id },
+      where: { id },
       include: {
         journeys: {
           orderBy: { createdAt: "desc" },
@@ -47,13 +48,14 @@ export async function GET(
 // PATCH /api/sites/[id] - Update site
 export async function PATCH(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const body = await request.json();
 
     const site = await prisma.site.update({
-      where: { id: params.id },
+      where: { id },
       data: {
         ...body,
         updatedAt: new Date(),
@@ -73,11 +75,12 @@ export async function PATCH(
 // DELETE /api/sites/[id] - Delete site
 export async function DELETE(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     await prisma.site.delete({
-      where: { id: params.id },
+      where: { id },
     });
 
     return NextResponse.json({ success: true });

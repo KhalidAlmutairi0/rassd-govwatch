@@ -158,6 +158,73 @@ export async function GET() {
         ? recentCompliance - previousCompliance
         : null;
 
+    // ── Issue category distribution — latest run per site only ──
+    const latestRunIds: string[] = [];
+    for (const sid of siteIds) {
+      const lr = await prisma.run.findFirst({
+        where: { siteId: sid, status: { in: ["passed", "failed"] } },
+        orderBy: { startedAt: "desc" },
+        select: { id: true },
+      });
+      if (lr) latestRunIds.push(lr.id);
+    }
+
+    const catCounts: Record<string, number> = { UX: 0, QA: 0, Accessibility: 0, Performance: 0 };
+
+    if (latestRunIds.length > 0) {
+      const allElements = await prisma.elementTestResult.findMany({
+        where: {
+          runId: { in: latestRunIds },
+          status: { in: ["failed", "warning"] },
+        },
+        select: { elementType: true, error: true, domChanges: true, responseTimeMs: true, status: true },
+      });
+
+      for (const el of allElements) {
+        const err = ((el.error || "") + " " + (el.domChanges || "")).toLowerCase();
+        const type = (el.elementType || "").toLowerCase();
+
+        if (
+          err.includes("timeout") || err.includes("slow") ||
+          err.includes("502") || err.includes("503") ||
+          (el.responseTimeMs && el.responseTimeMs > 3000)
+        ) {
+          catCounts.Performance++;
+        } else if (
+          err.includes("aria") || err.includes("label") || err.includes("focus") ||
+          err.includes("accessibility") || err.includes("contrast") || err.includes("alt") ||
+          err.includes("screen reader") || err.includes("role")
+        ) {
+          catCounts.Accessibility++;
+        } else if (
+          err.includes("not found") || err.includes("selector") ||
+          err.includes("not interactable") || err.includes("not attached") ||
+          err.includes("detached") || err.includes("hidden")
+        ) {
+          catCounts.QA++;
+        } else if (
+          err.includes("did not respond") || err.includes("did not navigate") ||
+          err.includes("url did not change") || err.includes("no visible") ||
+          err.includes("did not lead") || err.includes("failed") ||
+          type.includes("nav") || type.includes("link") || type.includes("cta") ||
+          type.includes("button") || type.includes("tab") || type.includes("menu")
+        ) {
+          catCounts.UX++;
+        } else {
+          catCounts.QA++;
+        }
+      }
+    }
+
+    const catTotal = Object.values(catCounts).reduce((a, b) => a + b, 0);
+    const issueCategories = Object.entries(catCounts)
+      .map(([label, count]) => ({
+        label,
+        count,
+        pct: catTotal > 0 ? Math.max(count > 0 ? 1 : 0, Math.round((count / catTotal) * 100)) : 0,
+      }))
+      .sort((a, b) => b.pct - a.pct);
+
     return NextResponse.json({
       complianceScore,
       totalSites: sites.length,
@@ -166,6 +233,7 @@ export async function GET() {
       trend,
       recentCompliance,
       previousCompliance,
+      issueCategories,
     });
   } catch (error) {
     console.error("[GOV] Dashboard error:", error);

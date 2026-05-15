@@ -7,22 +7,23 @@ import { startEscalationTimer } from "@/lib/escalation";
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { siteId: string } }
+  { params }: { params: Promise<{ siteId: string }> }
 ) {
   try {
+    const { siteId } = await params;
     const user = await getCurrentUser();
     if (!user || user.role !== "governor") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
 
-    const site = await prisma.site.findUnique({ where: { id: params.siteId } });
+    const site = await prisma.site.findUnique({ where: { id: siteId } });
     if (!site) {
       return NextResponse.json({ error: "Site not found" }, { status: 404 });
     }
 
     // Find the most critical open incident for this site
     const incident = await prisma.incident.findFirst({
-      where: { siteId: params.siteId, status: { in: ["open", "investigating"] } },
+      where: { siteId: siteId, status: { in: ["open", "investigating"] } },
       orderBy: { severity: "asc" }, // critical < high < medium < low
     });
 
@@ -30,7 +31,7 @@ export async function POST(
       // No incident — create one to attach the escalation
       const newIncident = await prisma.incident.create({
         data: {
-          siteId: params.siteId,
+          siteId: siteId,
           title: `Manual escalation: ${site.name}`,
           description: `Escalated manually by ${user.name || user.email} from the executive dashboard.`,
           status: "investigating",

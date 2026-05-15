@@ -2,10 +2,6 @@
 const nextConfig = {
   typescript: { ignoreBuildErrors: true },
   eslint: { ignoreDuringBuilds: true },
-  devIndicators: { buildActivity: false },
-  experimental: {
-    instrumentationHook: true,
-  },
   webpack: (config) => {
     // Fix for ws module in Next.js
     config.externals.push({

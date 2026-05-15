@@ -11,6 +11,9 @@ import {
   Star,
   ChevronRight,
   ExternalLink,
+  Zap,
+  AlertTriangle,
+  CheckCircle,
 } from "lucide-react";
 
 interface RunStep {
@@ -25,6 +28,24 @@ interface RunStep {
   metadata?: string;
 }
 
+interface ElementResult {
+  id: string;
+  elementType: string;
+  elementText?: string;
+  elementSelector: string;
+  parentSection?: string;
+  action: string;
+  status: string;
+  responseTimeMs?: number;
+  urlBefore?: string;
+  urlAfter?: string;
+  urlChanged: boolean;
+  screenshotBefore?: string;
+  screenshotAfter?: string;
+  error?: string;
+  domChanges?: string;
+}
+
 interface Run {
   id: string;
   status: string;
@@ -36,6 +57,7 @@ interface Run {
   startedAt: string;
   site: { name: string; baseUrl: string; nameAr?: string };
   steps: RunStep[];
+  elementResults?: ElementResult[];
 }
 
 interface Issue {
@@ -45,6 +67,12 @@ interface Issue {
   title: string;
   page: string;
   description?: string;
+  elementType?: string;
+  section?: string;
+  responseTimeMs?: number;
+  urlBefore?: string;
+  urlAfter?: string;
+  screenshotAfter?: string;
 }
 
 function severityClass(s: string) {
@@ -125,20 +153,29 @@ function MiniCircle({ score, label }: { score: number; label: string }) {
 
 /** Renders summary text with proper paragraph breaks and highlighted key terms */
 function SummaryText({ text, rtl }: { text: string; rtl?: boolean }) {
-  // Split into paragraphs on double newlines or sentence boundaries after punctuation
-  const paragraphs = text
+  const cleaned = text
+    .replace(/\*\*/g, "")
+    .replace(/^#+\s+/gm, "")
+    .replace(/^[-*]\s+/gm, "");
+
+  const paragraphs = cleaned
     .split(/\n\n+/)
     .flatMap((p) => p.split(/(?<=[.!؟])\s{2,}/))
     .map((p) => p.trim())
     .filter(Boolean);
 
   return (
-    <div className={`space-y-3 ${rtl ? "text-right" : ""}`}>
+    <div
+      className={`space-y-3 ${rtl ? "text-right" : ""}`}
+      dir={rtl ? "rtl" : undefined}
+      lang={rtl ? "ar" : undefined}
+    >
       {paragraphs.map((para, i) => (
         <p
           key={i}
-          className="text-sm text-white/85 leading-[1.9] tracking-wide font-light"
-          style={{ textIndent: rtl ? undefined : "0" }}
+          className={`text-sm text-white/85 leading-[2.1] font-light ${
+            rtl ? "font-cairo tracking-normal" : "tracking-wide"
+          }`}
         >
           {para}
         </p>
@@ -151,7 +188,6 @@ function deriveIssues(steps: RunStep[]): Issue[] {
   const issues: Issue[] = [];
   steps.forEach((s, i) => {
     if (s.status === "failed" && s.error) {
-      // Severity based on actual error content and position
       let severity: Issue["severity"] = "Medium";
       const err = s.error.toLowerCase();
       if (i === 0 || err.includes("navigation") || err.includes("timeout") || err.includes("crash")) {
@@ -162,7 +198,6 @@ function deriveIssues(steps: RunStep[]): Issue[] {
         severity = "Low";
       }
 
-      // Category based on error type
       let cat = "QA";
       if (err.includes("timeout") || err.includes("slow") || err.includes("network")) cat = "Performance";
       else if (err.includes("aria") || err.includes("label") || err.includes("focus")) cat = "Accessibility";
@@ -175,8 +210,82 @@ function deriveIssues(steps: RunStep[]): Issue[] {
         title: s.description || s.error.slice(0, 60),
         page: s.url ? (() => { try { return new URL(s.url!).pathname; } catch { return "/"; } })() : "/",
         description: s.error,
+        responseTimeMs: s.durationMs,
+        screenshotAfter: s.screenshotPath ?? undefined,
       });
     }
+  });
+  return issues;
+}
+
+function deriveIssuesFromElements(elements: ElementResult[]): Issue[] {
+  const issues: Issue[] = [];
+  elements.forEach((el, i) => {
+    if (el.status !== "failed") return;
+    const err = (el.error || el.domChanges || "").toLowerCase();
+
+    // Skip false positives — these are normal behaviors, not real issues
+    if (
+      !err ||
+      err.includes("element not found") ||
+      err.includes("selector not found") ||
+      err.includes("not interactable") ||
+      err.includes("element interaction completed") ||
+      err.includes("element responded") ||
+      err.includes("navigation successful") ||
+      err.includes("completed in") ||
+      err.includes("page transition") ||
+      err.includes("frame was detached") ||
+      err.includes("target closed") ||
+      err.includes("context was destroyed") ||
+      err.includes("navigation timeout") ||
+      err.includes("page.goto") ||
+      err.includes("page.click") ||
+      err.includes("page.waitfor") ||
+      err.includes("waiting until") ||
+      err.includes("call log")
+    ) return;
+
+    // Only show genuinely broken things
+    const isRealProblem =
+      err.includes("500") || err.includes("502") || err.includes("503") ||
+      err.includes("404") || err.includes("403") ||
+      err.includes("blank page") || err.includes("error page") ||
+      err.includes("crash") || err.includes("refused") ||
+      err.includes("blocked") || err.includes("ssl") ||
+      err.includes("certificate") || err.includes("security") ||
+      err.includes("mixed content");
+
+    if (!isRealProblem) return;
+
+    let severity: Issue["severity"] = "Medium";
+    if (err.includes("500") || err.includes("crash") || err.includes("blank page")) {
+      severity = "Critical";
+    } else if (err.includes("404") || err.includes("blocked") || err.includes("refused")) {
+      severity = "High";
+    } else if (err.includes("slow") || err.includes("warning")) {
+      severity = "Low";
+    }
+
+    let cat = "QA";
+    if (err.includes("timeout") || err.includes("slow") || err.includes("network") || err.includes("502") || err.includes("503")) cat = "Performance";
+    else if (err.includes("aria") || err.includes("label") || err.includes("focus") || err.includes("accessibility")) cat = "Accessibility";
+    else if (err.includes("404") || err.includes("refused") || err.includes("blocked")) cat = "UX";
+
+    issues.push({
+      id: `issue-${i}`,
+      severity,
+      category: cat,
+      title: el.elementText || el.error?.slice(0, 60) || "Element issue",
+      page: el.urlAfter ? (() => { try { return new URL(el.urlAfter!).pathname; } catch { return "/"; } })() : "/",
+      description: el.error || el.domChanges || "",
+      elementType: el.elementType,
+      section: el.parentSection ?? undefined,
+      responseTimeMs: el.responseTimeMs ?? undefined,
+      urlBefore: el.urlBefore ?? undefined,
+      urlAfter: el.urlAfter ?? undefined,
+      screenshotAfter: el.screenshotAfter ?? undefined,
+    });
   });
   return issues;
 }
@@ -203,15 +312,52 @@ function derivePages(steps: RunStep[]) {
     });
 }
 
+function derivePagesFromElements(elements: ElementResult[], siteUrl: string) {
+  const seen = new Set<string>();
+  const pages: Array<{ url: string; path: string; name: string; durationMs?: number; errorCount: number }> = [];
+
+  // Add the base site URL as homepage
+  try {
+    const base = new URL(siteUrl);
+    const homePath = base.pathname || "/";
+    seen.add(siteUrl);
+    pages.push({
+      url: siteUrl,
+      path: homePath,
+      name: "Homepage",
+      errorCount: 0,
+    });
+  } catch {}
+
+  // Collect unique URLs from element navigation
+  for (const el of elements) {
+    if (el.urlChanged && el.urlAfter && !seen.has(el.urlAfter)) {
+      seen.add(el.urlAfter);
+      let pathname = "/";
+      try { pathname = new URL(el.urlAfter).pathname || "/"; } catch { continue; }
+      pages.push({
+        url: el.urlAfter,
+        path: pathname,
+        name: el.elementText || pathname,
+        durationMs: el.responseTimeMs,
+        errorCount: elements.filter(e => e.urlAfter === el.urlAfter && e.status === "failed").length,
+      });
+    }
+  }
+
+  return pages;
+}
+
 export default function ReportPage() {
   const params = useParams();
   const router = useRouter();
   const runId = params.runId as string;
   const [run, setRun] = useState<Run | null>(null);
   const [loading, setLoading] = useState(true);
+  const [issuesExpanded, setIssuesExpanded] = useState(false);
 
   useEffect(() => {
-    fetch(`/api/sites/temp/runs/${runId}`)
+    fetch(`/api/sites/_/runs/${runId}`)
       .then((r) => r.json())
       .then((d) => setRun(d.run))
       .catch(console.error)
@@ -240,12 +386,44 @@ export default function ReportPage() {
     );
   }
 
-  // Parse summary
+  // Parse summary — supports both new structured format and legacy { text } format
   let summary: { executive?: string; executiveAr?: string; technicalDetails?: string; recommendations?: string[] } | null = null;
   try {
     const parsed = JSON.parse(run.summaryJson);
-    summary = { executive: parsed.executive || parsed.text || null, executiveAr: parsed.executiveAr, technicalDetails: parsed.technicalDetails, recommendations: parsed.recommendations };
-    if (!summary.executive && !summary.executiveAr) summary = null;
+    if (parsed.executive || parsed.executiveAr) {
+      summary = {
+        executive: parsed.executive || null,
+        executiveAr: parsed.executiveAr || null,
+        technicalDetails: parsed.technicalDetails,
+        recommendations: parsed.recommendations,
+      };
+    } else if (parsed.text) {
+      // Legacy format: parse the plain text into structured fields client-side
+      const raw = parsed.text as string;
+      const arabicHeaders = [/arabic\s+summary/i, /الملخص\s+العربي/, /الملخص\s+التنفيذي/, /العربية[:\s]/i];
+      let splitIdx = -1;
+      for (const re of arabicHeaders) {
+        const m = raw.search(re);
+        if (m > 0) { splitIdx = m; break; }
+      }
+      if (splitIdx < 0) {
+        const arabicRun = raw.search(/[؀-ۿ]{10,}/);
+        if (arabicRun > 0) {
+          const lineStart = raw.lastIndexOf("\n", arabicRun);
+          splitIdx = lineStart > 0 ? lineStart : arabicRun;
+        }
+      }
+      const strip = (s: string) => s.replace(/^(english\s+summary|executive\s+summary|arabic\s+summary|الملخص\s+العربي|الملخص\s+التنفيذي|العربية)\s*[:.]?\s*/gim, "").replace(/^\s*[-=]+\s*/gm, "").trim();
+      if (splitIdx > 0) {
+        summary = {
+          executive: strip(raw.slice(0, splitIdx)) || null,
+          executiveAr: strip(raw.slice(splitIdx)) || null,
+        };
+      } else {
+        summary = { executive: raw.trim() || null };
+      }
+    }
+    if (!summary?.executive && !summary?.executiveAr) summary = null;
   } catch {}
 
   const overallScore = run.totalSteps > 0 ? Math.round((run.passedSteps / run.totalSteps) * 100) : 0;
@@ -255,8 +433,10 @@ export default function ReportPage() {
   const coverageScore = run.totalSteps > 0 ? Math.min(100, Math.round((run.totalSteps / Math.max(run.totalSteps, 10)) * 100)) : 0; // Coverage = breadth of test
   const grade = overallScore >= 90 ? "A" : overallScore >= 80 ? "B+" : overallScore >= 70 ? "B" : overallScore >= 60 ? "C" : "D";
 
-  const issues = deriveIssues(run.steps);
-  const pages = derivePages(run.steps);
+  const hasSteps = run.steps && run.steps.length > 0;
+  const hasElements = run.elementResults && run.elementResults.length > 0;
+  const issues = hasSteps ? deriveIssues(run.steps) : hasElements ? deriveIssuesFromElements(run.elementResults!) : [];
+  const pages = hasSteps ? derivePages(run.steps) : hasElements ? derivePagesFromElements(run.elementResults!, run.site.baseUrl) : [];
   const scannedAt = new Date(run.startedAt).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
 
   return (
@@ -350,8 +530,8 @@ export default function ReportPage() {
 
             {/* Arabic block */}
             {summary.executiveAr && (
-              <div className="px-6 py-5" dir="rtl">
-                <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-emerald-500 mb-4 flex items-center gap-2 justify-end">
+              <div className="px-6 py-5 font-cairo" dir="rtl" lang="ar">
+                <p className="text-[10px] font-bold tracking-[0.15em] text-emerald-500 mb-4 flex items-center gap-2 justify-end">
                   الملخص التنفيذي
                   <span className="w-3 h-px bg-emerald-500" />
                 </p>
@@ -382,26 +562,176 @@ export default function ReportPage() {
         </div>
       )}
 
-      {/* Pages Discovered */}
-      <div className="bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-xl p-4">
-        <div className="flex items-center justify-between">
+      {/* Elements Tested & Pages Discovered */}
+      <div className="grid grid-cols-2 gap-4">
+        <div className="bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-xl p-4">
+          <div className="flex items-center gap-2">
+            <Zap className="w-4 h-4 text-emerald-400" />
+            <div>
+              <p className="text-sm font-medium text-white">{run.totalSteps} Elements Tested</p>
+              <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                {run.passedSteps} passed, {run.failedSteps} failed{run.totalSteps - run.passedSteps - run.failedSteps > 0 ? `, ${run.totalSteps - run.passedSteps - run.failedSteps} warnings` : ""}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-xl p-4">
           <div className="flex items-center gap-2">
             <Globe className="w-4 h-4 text-[hsl(var(--muted-foreground))]" />
             <div>
               <p className="text-sm font-medium text-white">{pages.length} Pages Discovered</p>
               <p className="text-xs text-[hsl(var(--muted-foreground))]">
-                All pages found during the crawl were analyzed for UX, accessibility, and performance issues.
+                Unique pages found during the crawl and element testing.
               </p>
             </div>
           </div>
-          <Link
-            href={`/report/${runId}/pages`}
-            className="flex items-center gap-1 text-xs text-emerald-400 hover:text-emerald-300 transition-colors"
-          >
-            View all pages <ChevronRight className="w-3 h-3" />
-          </Link>
         </div>
       </div>
+
+      {/* Issues or All Clear */}
+      {issues.length > 0 ? (
+        <div className="space-y-3">
+          {/* Section header */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />
+              <p className="text-sm font-bold text-white">{issues.length} Critical Issue{issues.length !== 1 ? "s" : ""} Detected</p>
+              <div className="flex items-center gap-1.5 ml-2">
+                {issues.filter((i) => i.severity === "Critical").length > 0 && (
+                  <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-red-600 text-white">
+                    {issues.filter((i) => i.severity === "Critical").length} Critical
+                  </span>
+                )}
+                {issues.filter((i) => i.severity === "High").length > 0 && (
+                  <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-orange-500 text-white">
+                    {issues.filter((i) => i.severity === "High").length} High
+                  </span>
+                )}
+                {issues.filter((i) => i.severity === "Medium").length > 0 && (
+                  <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-yellow-500 text-black">
+                    {issues.filter((i) => i.severity === "Medium").length} Medium
+                  </span>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={() => setIssuesExpanded(!issuesExpanded)}
+              className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+            >
+              {issuesExpanded ? "Hide" : `View all ${issues.length}`}
+            </button>
+          </div>
+
+          {/* Detailed issue cards — collapsed by default */}
+          {issuesExpanded && issues.slice(0, 10).map((issue) => {
+            const severityBorder = issue.severity === "Critical" ? "border-red-600/60" : issue.severity === "High" ? "border-orange-500/60" : "border-yellow-500/40";
+            const severityBg = issue.severity === "Critical" ? "bg-red-950/30" : issue.severity === "High" ? "bg-orange-950/20" : "bg-yellow-950/10";
+            const severityIcon = issue.severity === "Critical" ? "bg-red-500" : issue.severity === "High" ? "bg-orange-500" : "bg-yellow-500";
+
+            return (
+              <div
+                key={issue.id}
+                className={`rounded-xl border ${severityBorder} ${severityBg} overflow-hidden`}
+              >
+                {/* Issue header */}
+                <div className="px-5 py-4 flex items-start gap-4">
+                  {/* Severity indicator */}
+                  <div className="shrink-0 mt-0.5">
+                    <div className={`w-3 h-3 rounded-full ${severityIcon}`} />
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    {/* Title + badges */}
+                    <div className="flex items-center gap-2 flex-wrap mb-2">
+                      <span className={`px-2 py-0.5 text-[10px] font-bold rounded ${severityClass(issue.severity)}`}>
+                        {issue.severity}
+                      </span>
+                      <span className={`px-2 py-0.5 text-[10px] border rounded ${categoryClass(issue.category)}`}>
+                        {issue.category}
+                      </span>
+                      {issue.elementType && (
+                        <span className="px-2 py-0.5 text-[10px] border border-white/10 rounded text-white/40">
+                          {issue.elementType}
+                        </span>
+                      )}
+                      {issue.section && (
+                        <span className="px-2 py-0.5 text-[10px] border border-white/10 rounded text-white/40">
+                          {issue.section}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Element name */}
+                    <p className="text-sm font-semibold text-white mb-1.5">{issue.title}</p>
+
+                    {/* Error description */}
+                    {issue.description && (
+                      <div className="bg-black/30 rounded-lg px-3 py-2 mb-3">
+                        <p className="text-xs text-red-300/90 font-mono leading-relaxed break-words">
+                          {issue.description}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Detail grid */}
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
+                      {issue.page && (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[hsl(var(--muted-foreground))]">Page:</span>
+                          <span className="text-white/70 font-mono truncate">{issue.page}</span>
+                        </div>
+                      )}
+                      {issue.responseTimeMs !== undefined && (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[hsl(var(--muted-foreground))]">Response:</span>
+                          <span className={`font-mono ${issue.responseTimeMs > 5000 ? "text-red-400" : issue.responseTimeMs > 2000 ? "text-yellow-400" : "text-white/70"}`}>
+                            {(issue.responseTimeMs / 1000).toFixed(1)}s
+                          </span>
+                        </div>
+                      )}
+                      {issue.urlBefore && issue.urlAfter && issue.urlBefore !== issue.urlAfter && (
+                        <div className="col-span-2 flex items-center gap-1.5">
+                          <span className="text-[hsl(var(--muted-foreground))]">URL changed:</span>
+                          <span className="text-white/50 font-mono truncate text-[11px]">
+                            {(() => { try { return new URL(issue.urlBefore).pathname; } catch { return issue.urlBefore; } })()}
+                          </span>
+                          <span className="text-[hsl(var(--muted-foreground))]">&rarr;</span>
+                          <span className="text-white/70 font-mono truncate text-[11px]">
+                            {(() => { try { return new URL(issue.urlAfter).pathname; } catch { return issue.urlAfter; } })()}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Screenshot thumbnail */}
+                  {issue.screenshotAfter && (
+                    <div className="shrink-0 w-32 h-20 rounded-lg overflow-hidden border border-white/10 bg-black/40">
+                      <img
+                        src={`/api/artifacts/${issue.screenshotAfter.replace(/^.*?artifacts[\\/]/, "")}`}
+                        alt="Error screenshot"
+                        className="w-full h-full object-cover"
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : run.totalSteps > 0 ? (
+        <div className="bg-[hsl(var(--card))] border border-emerald-900/50 rounded-xl p-4">
+          <div className="flex items-center gap-2">
+            <CheckCircle className="w-4 h-4 text-emerald-400" />
+            <p className="text-sm font-medium text-white">No Critical Issues Detected</p>
+          </div>
+          <p className="text-xs text-[hsl(var(--muted-foreground))] mt-1 ml-6">
+            All tested elements responded without critical errors.
+          </p>
+        </div>
+      ) : null}
     </div>
   );
 }

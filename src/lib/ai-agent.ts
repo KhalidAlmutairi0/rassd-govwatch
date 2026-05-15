@@ -228,16 +228,17 @@ export async function assessElementResult(
 I'm showing you two screenshots: BEFORE the action and AFTER the action.
 
 ## ASSESS:
-1. Did the element respond correctly?
-2. Was the behavior as expected?
-3. Are there any visual issues (broken layout, error messages, blank page)?
-4. Rate: "passed", "failed", or "warning"
+1. Did the element respond correctly? (page changed, content appeared, dropdown opened, etc.)
+2. Are there any CRITICAL visual issues? (blank page, error page, totally broken layout)
+3. Rate: "passed", "failed", or "warning"
 
-Response time guidelines:
-- Under 1s = good
-- 1-3s = acceptable but slow (warning if >2s)
-- Over 3s = too slow (warning)
-- Timeout (>5s) = failed
+IMPORTANT GUIDELINES:
+- If the element responded at all (URL changed, page loaded, content appeared), it PASSED
+- Console errors from third-party scripts (analytics, tracking, CSP) are NORMAL on government sites and should NOT cause failure
+- Only mark "failed" if: the page went blank, showed an error page, element was completely non-functional, or critical layout broke
+- Mark "warning" only for slow response (>4s) or minor visual issues
+- Response time under 6s with a visible response = passed
+- Government sites often have many background errors — focus only on the tested element's behavior
 
 Respond in JSON:
 \`\`\`json
@@ -316,12 +317,21 @@ ${results.filter(r => r.responseTimeMs > 2000).map(r =>
 
 Be professional, concise, and actionable.
 
-Format as:
-**English Summary:**
-[your summary]
+IMPORTANT FORMATTING RULES:
+- Do NOT use markdown formatting (no **, no ##, no *, no bullet points with -)
+- Write in clean, plain prose paragraphs
+- Use simple numbered lists (1. 2. 3.) only for recommendations
+- Separate the English and Arabic sections with a blank line
 
-**Arabic Summary (الملخص العربي):**
-[your summary in Arabic]`;
+Format as:
+
+English Summary
+
+[your summary in plain paragraphs]
+
+Arabic Summary
+
+[your summary in Arabic in plain paragraphs]`;
 
   try {
     return await callAI(prompt);
@@ -498,7 +508,7 @@ function fallbackAnalysis(
   let id = 1;
 
   for (const line of lines) {
-    if (id > 20) break;
+    if (id > 60) break;
 
     const tag = line.match(/<(\w+)/)?.[1];
     if (!tag || !["a", "button", "input"].includes(tag)) continue;
@@ -610,25 +620,72 @@ function fallbackAssessment(
   }
 ): { status: string; assessment: string } {
 
-  // Simple heuristic assessment
-  if (context.consoleErrors.length > 0 || context.networkErrors.length > 0) {
+  // Filter out common benign console errors (tracking, CSP, mixed content, etc.)
+  const realErrors = context.consoleErrors.filter((e) => {
+    const lower = e.toLowerCase();
+    return !(
+      lower.includes("cors") ||
+      lower.includes("mixed content") ||
+      lower.includes("favicon") ||
+      lower.includes("deprecated") ||
+      lower.includes("third-party") ||
+      lower.includes("cookie") ||
+      lower.includes("analytics") ||
+      lower.includes("gtm") ||
+      lower.includes("google") ||
+      lower.includes("facebook") ||
+      lower.includes("tracking") ||
+      lower.includes("csp") ||
+      lower.includes("content security policy") ||
+      lower.includes("net::err") ||
+      lower.includes("failed to load resource") ||
+      lower.includes("manifest")
+    );
+  });
+
+  // Click/navigate actions: success = page responded (URL changed or page loaded)
+  if (testAction.action === "click") {
+    if (context.urlChanged) {
+      return {
+        status: "passed",
+        assessment: `Navigation successful (${context.urlBefore} → ${context.urlAfter}) in ${context.responseTimeMs}ms`,
+      };
+    }
+    if (context.responseTimeMs < 5000) {
+      return {
+        status: "passed",
+        assessment: `Element responded to click in ${context.responseTimeMs}ms`,
+      };
+    }
+  }
+
+  if (testAction.action === "hover" && context.responseTimeMs < 5000) {
     return {
-      status: "failed",
-      assessment: `Errors detected: ${[...context.consoleErrors, ...context.networkErrors].join(", ")}`,
+      status: "passed",
+      assessment: `Hover interaction completed in ${context.responseTimeMs}ms`,
     };
   }
 
-  if (context.responseTimeMs > 3000) {
+  if (testAction.action === "type" && context.responseTimeMs < 5000) {
+    return {
+      status: "passed",
+      assessment: `Text input accepted in ${context.responseTimeMs}ms`,
+    };
+  }
+
+  // Slow but still worked
+  if (context.responseTimeMs >= 5000) {
     return {
       status: "warning",
       assessment: `Element responded but was slow (${context.responseTimeMs}ms)`,
     };
   }
 
-  if (testAction.action === "click" && context.urlChanged) {
+  // Only fail if there are critical, non-benign errors that suggest real breakage
+  if (realErrors.length > 0 && context.responseTimeMs > 3000) {
     return {
-      status: "passed",
-      assessment: `Navigation successful (${context.urlBefore} → ${context.urlAfter})`,
+      status: "warning",
+      assessment: `Possible issues detected: ${realErrors.slice(0, 2).join("; ")}`,
     };
   }
 
@@ -647,19 +704,17 @@ function templateSummary(
   const failed = results.filter(r => r.status === "failed").length;
   const warnings = results.filter(r => r.status === "warning").length;
 
-  const englishSummary = `
-**English Summary:**
+  const englishSummary = `English Summary
+
 Tested ${results.length} interactive elements on ${pageUnderstanding.siteName}. ${passed} elements passed, ${failed} failed, and ${warnings} showed warnings. Total test duration: ${(totalDuration / 1000).toFixed(1)}s.
 
-${failed > 0 ? `Critical issues detected that prevent users from accessing key functionality. ` : ""}${warnings > 0 ? `Some elements are slow or showing minor issues. ` : ""}${failed === 0 && warnings === 0 ? `All tested elements are functioning correctly.` : ""}
-`;
+${failed > 0 ? `Critical issues detected that prevent users from accessing key functionality. ` : ""}${warnings > 0 ? `Some elements are slow or showing minor issues. ` : ""}${failed === 0 && warnings === 0 ? `All tested elements are functioning correctly.` : ""}`;
 
-  const arabicSummary = `
-**Arabic Summary (الملخص العربي):**
+  const arabicSummary = `الملخص العربي
+
 تم اختبار ${results.length} عنصر تفاعلي على ${pageUnderstanding.siteNameAr || pageUnderstanding.siteName}. نجح ${passed} عنصر، وفشل ${failed}، وأظهر ${warnings} تحذيرات. إجمالي مدة الاختبار: ${(totalDuration / 1000).toFixed(1)}ث.
 
-${failed > 0 ? `تم اكتشاف مشاكل حرجة تمنع المستخدمين من الوصول إلى الوظائف الرئيسية. ` : ""}${warnings > 0 ? `بعض العناصر بطيئة أو تظهر مشاكل بسيطة. ` : ""}${failed === 0 && warnings === 0 ? `جميع العناصر المختبرة تعمل بشكل صحيح.` : ""}
-`;
+${failed > 0 ? `تم اكتشاف مشاكل حرجة تمنع المستخدمين من الوصول إلى الوظائف الرئيسية. ` : ""}${warnings > 0 ? `بعض العناصر بطيئة أو تظهر مشاكل بسيطة. ` : ""}${failed === 0 && warnings === 0 ? `جميع العناصر المختبرة تعمل بشكل صحيح.` : ""}`;
 
   return englishSummary + "\n" + arabicSummary;
 }

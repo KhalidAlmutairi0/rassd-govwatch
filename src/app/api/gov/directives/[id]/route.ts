@@ -6,9 +6,10 @@ import { getCurrentUser } from "@/lib/auth";
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const user = await getCurrentUser();
     if (!user || user.role !== "governor") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
@@ -18,7 +19,7 @@ export async function PATCH(
     const { status, title, directiveBody, dueDate } = body;
 
     const existing = await (prisma as any).directive.findUnique({
-      where: { id: params.id },
+      where: { id },
     });
     if (!existing) {
       return NextResponse.json({ error: "Directive not found" }, { status: 404 });
@@ -32,7 +33,7 @@ export async function PATCH(
     if (status === "resolved") updateData.resolvedAt = new Date();
 
     const updated = await (prisma as any).directive.update({
-      where: { id: params.id },
+      where: { id },
       data: updateData,
     });
 

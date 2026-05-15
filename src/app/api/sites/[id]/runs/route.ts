@@ -5,11 +5,12 @@ import { prisma } from "@/lib/prisma";
 // GET /api/sites/[id]/runs - List runs for a site
 export async function GET(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const runs = await prisma.run.findMany({
-      where: { siteId: params.id },
+      where: { siteId: id },
       orderBy: { startedAt: "desc" },
       take: 50,
       include: {
@@ -30,15 +31,16 @@ export async function GET(
 // POST /api/sites/[id]/runs - Trigger a new run
 export async function POST(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const body = await request.json();
     const { journeyId } = body;
 
     // Get site
     const site = await prisma.site.findUnique({
-      where: { id: params.id },
+      where: { id },
     });
 
     if (!site) {
@@ -53,7 +55,7 @@ export async function POST(
       });
     } else {
       journey = await prisma.journey.findFirst({
-        where: { siteId: params.id, isDefault: true },
+        where: { siteId: id, isDefault: true },
       });
     }
 
@@ -67,7 +69,7 @@ export async function POST(
       ];
       journey = await prisma.journey.create({
         data: {
-          siteId: params.id,
+          siteId: id,
           name: `${site.name} Smoke Test`,
           type: "smoke",
           stepsJson: JSON.stringify(defaultSteps),
@@ -79,7 +81,7 @@ export async function POST(
     // Create run record (keep as "queued" - execution starts when client connects)
     const run = await prisma.run.create({
       data: {
-        siteId: params.id,
+        siteId: id,
         journeyId: journey.id,
         status: "queued",
         triggeredBy: "manual",

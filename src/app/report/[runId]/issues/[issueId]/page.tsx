@@ -69,7 +69,7 @@ export default function IssueDetailPage() {
   const [resolved, setResolved] = useState(false);
 
   useEffect(() => {
-    fetch(`/api/sites/temp/runs/${runId}`)
+    fetch(`/api/sites/_/runs/${runId}`)
       .then((r) => r.json())
       .then((d) => {
         const steps = d.run?.steps ?? [];

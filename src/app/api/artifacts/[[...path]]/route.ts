@@ -6,10 +6,11 @@ import path from "path";
 // GET /api/artifacts/[...path] - Serve artifact files
 export async function GET(
   request: Request,
-  { params }: { params: { path?: string[] } }
+  { params }: { params: Promise<{ path?: string[] }> }
 ) {
   try {
-    if (!params.path || params.path.length === 0) {
+    const { path: pathSegments } = await params;
+    if (!pathSegments || pathSegments.length === 0) {
       return NextResponse.json(
         { error: "Path required" },
         { status: 400 }
@@ -17,7 +18,7 @@ export async function GET(
     }
 
     // Build file path (relative to project root)
-    const filePath = path.join(process.cwd(), "artifacts", ...params.path);
+    const filePath = path.join(process.cwd(), "artifacts", ...pathSegments);
 
     // Security: Ensure path is within artifacts directory
     const artifactsDir = path.join(process.cwd(), "artifacts");

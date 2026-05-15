@@ -6,6 +6,7 @@ RUN apt-get update && apt-get install -y \
     fonts-noto \
     fonts-noto-cjk \
     ca-certificates \
+    openssl \
     libglib2.0-0 \
     libnss3 \
     libnspr4 \
@@ -45,12 +46,11 @@ RUN npx prisma generate
 # Copy source
 COPY . .
 
-# Build Next.js — DATABASE_URL must exist at build time for Prisma schema validation.
-# The real value is injected by Render at runtime via environment variables.
-RUN DATABASE_URL="postgresql://build:build@localhost:5432/build" npm run build
+# Build Next.js — SQLite needs a dummy path at build time
+RUN DATABASE_URL="file:./build.db" npm run build && rm -f build.db
 
-# Create artifacts directory
-RUN mkdir -p artifacts
+# Create dirs for artifacts and persistent data
+RUN mkdir -p artifacts /data
 
 EXPOSE 3000
 

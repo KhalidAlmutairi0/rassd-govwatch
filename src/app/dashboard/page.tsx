@@ -14,6 +14,7 @@ import {
   Loader2,
   BarChart2,
   AlertCircle,
+  AlertTriangle,
 } from "lucide-react";
 
 function Favicon({ baseUrl, name, size = 5 }: { baseUrl: string; name: string; size?: number }) {
@@ -184,18 +185,339 @@ function HealthBar({ label, score, baseUrl }: { label: string; score: number; ba
   );
 }
 
+interface IssueCat { label: string; count: number; pct: number }
+
+interface CriticalIssue {
+  id: string;
+  severity: string;
+  category: string;
+  title: string;
+  page: string;
+  description: string;
+  elementType: string;
+  section: string | null;
+  responseTimeMs: number | null;
+  urlBefore: string | null;
+  urlAfter: string | null;
+  screenshotAfter: string | null;
+  siteName: string;
+  siteNameAr: string | null;
+  siteUrl: string;
+}
+
+function severityBadge(s: string) {
+  if (s === "Critical") return "bg-red-600 text-white";
+  if (s === "High") return "bg-orange-500 text-white";
+  if (s === "Medium") return "bg-yellow-500 text-black";
+  return "bg-yellow-400 text-black";
+}
+
+function categoryBadge(c: string) {
+  if (c === "Accessibility") return "border-blue-500 text-blue-400";
+  if (c === "UX") return "border-purple-500 text-purple-400";
+  if (c === "QA") return "border-cyan-500 text-cyan-400";
+  if (c === "Performance") return "border-orange-500 text-orange-400";
+  return "border-gray-500 text-gray-400";
+}
+
+function CriticalIssuesSection({ refreshKey = 0 }: { refreshKey?: number }) {
+  const [issues, setIssues] = useState<CriticalIssue[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    setLoading(true);
+    fetch("/api/critical-issues")
+      .then((r) => r.json())
+      .then((d) => setIssues(d.issues ?? []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [refreshKey]);
+
+  if (loading) return null;
+  if (issues.length === 0) return null;
+
+  const criticalCount = issues.filter((i) => i.severity === "Critical").length;
+  const highCount = issues.filter((i) => i.severity === "High").length;
+
+  return (
+    <section className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 text-red-400" />
+          <h2 className="text-sm font-bold text-white">
+            {issues.length} Critical Issue{issues.length !== 1 ? "s" : ""} Detected
+          </h2>
+          <div className="flex items-center gap-1.5 ml-2">
+            {criticalCount > 0 && (
+              <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-red-600 text-white">
+                {criticalCount} Critical
+              </span>
+            )}
+            {highCount > 0 && (
+              <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-orange-500 text-white">
+                {highCount} High
+              </span>
+            )}
+          </div>
+        </div>
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="text-xs text-emerald-400 hover:text-emerald-300 transition-colors"
+        >
+          {expanded ? "Hide" : `View all ${issues.length}`}
+        </button>
+      </div>
+
+      {expanded && issues.map((issue) => {
+        const borderCls = issue.severity === "Critical" ? "border-red-600/60" : issue.severity === "High" ? "border-orange-500/60" : "border-yellow-500/40";
+        const bgCls = issue.severity === "Critical" ? "bg-red-950/30" : issue.severity === "High" ? "bg-orange-950/20" : "bg-yellow-950/10";
+        const dotCls = issue.severity === "Critical" ? "bg-red-500" : issue.severity === "High" ? "bg-orange-500" : "bg-yellow-500";
+
+        return (
+          <div key={issue.id} className={`rounded-xl border ${borderCls} ${bgCls} overflow-hidden`}>
+            <div className="px-5 py-4 flex items-start gap-4">
+              <div className="shrink-0 mt-0.5">
+                <div className={`w-3 h-3 rounded-full ${dotCls}`} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap mb-2">
+                  <span className={`px-2 py-0.5 text-[10px] font-bold rounded ${severityBadge(issue.severity)}`}>
+                    {issue.severity}
+                  </span>
+                  <span className={`px-2 py-0.5 text-[10px] border rounded ${categoryBadge(issue.category)}`}>
+                    {issue.category}
+                  </span>
+                  {issue.elementType && (
+                    <span className="px-2 py-0.5 text-[10px] border border-white/10 rounded text-white/40">
+                      {issue.elementType}
+                    </span>
+                  )}
+                  <span className="px-2 py-0.5 text-[10px] border border-white/10 rounded text-white/40 ml-auto">
+                    {issue.siteName}
+                  </span>
+                </div>
+
+                <p className="text-sm font-semibold text-white mb-1.5">{issue.title}</p>
+
+                {issue.description && (
+                  <div className="bg-black/30 rounded-lg px-3 py-2 mb-3">
+                    <p className="text-xs text-red-300/90 font-mono leading-relaxed break-words line-clamp-3">
+                      {issue.description}
+                    </p>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
+                  {issue.page && (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[hsl(var(--muted-foreground))]">Page:</span>
+                      <span className="text-white/70 font-mono truncate">{issue.page}</span>
+                    </div>
+                  )}
+                  {issue.responseTimeMs !== null && issue.responseTimeMs !== undefined && (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[hsl(var(--muted-foreground))]">Response:</span>
+                      <span className={`font-mono ${issue.responseTimeMs > 5000 ? "text-red-400" : issue.responseTimeMs > 2000 ? "text-yellow-400" : "text-white/70"}`}>
+                        {(issue.responseTimeMs / 1000).toFixed(1)}s
+                      </span>
+                    </div>
+                  )}
+                  {issue.urlBefore && issue.urlAfter && issue.urlBefore !== issue.urlAfter && (
+                    <div className="col-span-2 flex items-center gap-1.5">
+                      <span className="text-[hsl(var(--muted-foreground))]">URL changed:</span>
+                      <span className="text-white/50 font-mono truncate text-[11px]">
+                        {(() => { try { return new URL(issue.urlBefore).pathname; } catch { return issue.urlBefore; } })()}
+                      </span>
+                      <span className="text-[hsl(var(--muted-foreground))]">&rarr;</span>
+                      <span className="text-white/70 font-mono truncate text-[11px]">
+                        {(() => { try { return new URL(issue.urlAfter).pathname; } catch { return issue.urlAfter; } })()}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {issue.screenshotAfter && (
+                <div className="shrink-0 w-28 h-18 rounded-lg overflow-hidden border border-white/10 bg-black/40">
+                  <img
+                    src={`/api/artifacts/${issue.screenshotAfter.replace(/^.*?artifacts[\\/]/, "")}`}
+                    alt="Error screenshot"
+                    className="w-full h-full object-cover"
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </section>
+  );
+}
+
+function DevIssueCategoriesCard({ categories }: { categories: IssueCat[] }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [sortBy, setSortBy] = useState<"pct" | "count">("pct");
+  const [expanded, setExpanded] = useState(false);
+
+  const cats = categories?.length
+    ? [...categories].sort((a, b) => sortBy === "pct" ? b.pct - a.pct : b.count - a.count)
+    : [
+        { label: "UX", count: 0, pct: 0 },
+        { label: "QA", count: 0, pct: 0 },
+        { label: "Accessibility", count: 0, pct: 0 },
+        { label: "Performance", count: 0, pct: 0 },
+      ];
+
+  const shortLabel: Record<string, string> = { Accessibility: "Access.", Performance: "Perf." };
+  const barColors: Record<string, string> = {
+    UX: "bg-purple-400",
+    QA: "bg-cyan-400",
+    Accessibility: "bg-blue-400",
+    Performance: "bg-orange-400",
+  };
+  const textColors: Record<string, string> = {
+    UX: "text-purple-400",
+    QA: "text-cyan-400",
+    Accessibility: "text-blue-400",
+    Performance: "text-orange-400",
+  };
+  const descriptions: Record<string, string> = {
+    UX: "Navigation, buttons, links, tabs, and menus that are broken or unresponsive",
+    QA: "Form inputs, search, data display, and general functional issues",
+    Accessibility: "Missing labels, poor contrast, focus issues, and ARIA violations",
+    Performance: "Slow responses (>3s), timeouts, and network errors",
+  };
+  const totalIssues = cats.reduce((s, c) => s + c.count, 0);
+  const maxPct = Math.max(...cats.map((c) => c.pct), 1);
+
+  const fmtPct = (pct: number, count: number) => {
+    if (count === 0) return "0%";
+    if (pct < 1) return "<1%";
+    return `${pct}%`;
+  };
+
+  return (
+    <section className="bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-xl p-5 space-y-4 relative">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-sm font-semibold text-white">Issue Categories</h2>
+          <p className="text-xs text-[hsl(var(--muted-foreground))] mt-0.5">
+            Distribution across all sites (latest scan)
+          </p>
+        </div>
+        <div className="relative">
+          <button
+            onClick={() => setMenuOpen(!menuOpen)}
+            className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+          >
+            <MoreHorizontal className="w-4 h-4 text-[hsl(var(--muted-foreground))]" />
+          </button>
+          {menuOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
+              <div className="absolute right-0 top-8 z-50 w-48 bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-lg shadow-xl py-1">
+                <button
+                  onClick={() => { setSortBy("pct"); setMenuOpen(false); }}
+                  className={`w-full text-left px-3 py-2 text-xs hover:bg-white/5 transition-colors ${sortBy === "pct" ? "text-emerald-400" : "text-white/70"}`}
+                >
+                  Sort by percentage
+                </button>
+                <button
+                  onClick={() => { setSortBy("count"); setMenuOpen(false); }}
+                  className={`w-full text-left px-3 py-2 text-xs hover:bg-white/5 transition-colors ${sortBy === "count" ? "text-emerald-400" : "text-white/70"}`}
+                >
+                  Sort by count
+                </button>
+                <div className="border-t border-[hsl(var(--border))] my-1" />
+                <button
+                  onClick={() => { setExpanded(!expanded); setMenuOpen(false); }}
+                  className="w-full text-left px-3 py-2 text-xs text-white/70 hover:bg-white/5 transition-colors"
+                >
+                  {expanded ? "Collapse details" : "Show details"}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="flex items-end gap-3 h-28">
+        {cats.map(({ label, pct, count }) => (
+          <div key={label} className="flex-1 flex flex-col items-center gap-1.5">
+            <span className={`text-[11px] font-semibold ${textColors[label] || "text-white/70"}`}>
+              {fmtPct(pct, count)}
+            </span>
+            <div
+              className={`w-full rounded-t-md ${barColors[label] || "bg-white"} transition-all duration-700`}
+              style={{
+                height: `${count > 0 ? Math.max((pct / maxPct) * 80, 8) : 4}px`,
+                opacity: count > 0 ? 1 : 0.15,
+              }}
+            />
+            <span className="text-[10px] text-[hsl(var(--muted-foreground))] font-medium">
+              {shortLabel[label] || label}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex items-center justify-between px-1">
+        <span className="text-[10px] text-[hsl(var(--muted-foreground))] uppercase tracking-wider font-medium">
+          Total Issues
+        </span>
+        <span className="text-sm font-bold text-white">{totalIssues}</span>
+      </div>
+
+      <div className="space-y-3">
+        {cats.map(({ label, pct, count }) => (
+          <div key={label}>
+            <div className="flex items-center gap-3">
+              <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${barColors[label] || "bg-white"}`} />
+              <span className="text-xs text-white/80 w-24 font-medium">{label}</span>
+              <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-700 ${barColors[label] || "bg-white/60"}`}
+                  style={{ width: `${count > 0 ? Math.max(pct, 2) : 0}%` }}
+                />
+              </div>
+              <span className={`text-xs w-8 text-right font-semibold ${textColors[label] || "text-white/70"}`}>
+                {fmtPct(pct, count)}
+              </span>
+              <span className="text-[11px] text-[hsl(var(--muted-foreground))] w-8 text-right tabular-nums">
+                {count}
+              </span>
+            </div>
+            {expanded && (
+              <p className="text-[11px] text-[hsl(var(--muted-foreground))] ml-[22px] mt-1">
+                {descriptions[label] || ""}
+              </p>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export default function DashboardPage() {
   const [sites, setSites] = useState<Site[]>([]);
   const [runs, setRuns] = useState<Run[]>([]);
+  const [issueCategories, setIssueCategories] = useState<IssueCat[]>([]);
+  const [userName, setUserName] = useState<string>("");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     Promise.all([
       fetch("/api/sites").then((r) => r.json()),
-      fetch("/api/sites").then((r) => r.json()), // placeholder — use /api/runs when available
+      fetch("/api/auth/me").then((r) => r.json()).catch(() => ({ user: null })),
+      fetch("/api/issue-categories").then((r) => r.json()).catch(() => ({ categories: [] })),
     ])
-      .then(([siteData]) => {
+      .then(([siteData, me, catData]) => {
+        if (me.user?.name) setUserName(me.user.name);
         setSites(siteData.sites ?? []);
+        setIssueCategories(catData.categories ?? []);
         // Build mock recent runs from sites data
         const mockRuns: Run[] = (siteData.sites ?? []).flatMap((s: Site, si: number) =>
           Array.from({ length: 2 }, (_, i) => ({
@@ -247,7 +569,7 @@ export default function DashboardPage() {
       {/* ── Header ── */}
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-xl font-bold text-white">Welcome back, Jordan</h1>
+          <h1 className="text-xl font-bold text-white">Welcome back{userName ? `, ${userName}` : ""}</h1>
           <p className="text-sm text-[hsl(var(--muted-foreground))] mt-0.5">
             Here&apos;s an overview of your UX scan activity.
           </p>
@@ -292,6 +614,9 @@ export default function DashboardPage() {
           sub="All groups"
         />
       </div>
+
+      {/* ── Critical Issues ── */}
+      <CriticalIssuesSection />
 
       {/* ── Recent Scans ── */}
       <section className="bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-xl overflow-hidden">
@@ -463,57 +788,7 @@ export default function DashboardPage() {
         </section>
 
         {/* Issue Categories */}
-        <section className="bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-xl p-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-sm font-semibold text-white">Issue Categories</h2>
-              <p className="text-xs text-[hsl(var(--muted-foreground))] mt-0.5">
-                Distribution across all sites
-              </p>
-            </div>
-            <button className="p-1 rounded hover:bg-white/5">
-              <MoreHorizontal className="w-4 h-4 text-[hsl(var(--muted-foreground))]" />
-            </button>
-          </div>
-          {/* Bar chart */}
-          <div className="flex items-end gap-2 h-24">
-            {[
-              { label: "UX", pct: 35, h: "h-[90%]" },
-              { label: "QA", pct: 28, h: "h-[72%]" },
-              { label: "Access.", pct: 22, h: "h-[56%]" },
-              { label: "Perf.", pct: 15, h: "h-[38%]" },
-            ].map(({ label, pct, h }) => (
-              <div key={label} className="flex-1 flex flex-col items-center gap-1">
-                <div className={`w-full ${h} bg-white rounded-sm min-h-[4px]`} />
-                <span className="text-[10px] text-[hsl(var(--muted-foreground))]">
-                  {label}
-                </span>
-              </div>
-            ))}
-          </div>
-          {/* List */}
-          <div className="space-y-2.5">
-            {[
-              { label: "UX", pct: 35 },
-              { label: "QA", pct: 28 },
-              { label: "Accessibility", pct: 22 },
-              { label: "Performance", pct: 15 },
-            ].map(({ label, pct }) => (
-              <div key={label} className="flex items-center gap-3">
-                <span className="text-xs text-[hsl(var(--muted-foreground))] w-20">{label}</span>
-                <div className="flex-1 h-1 bg-white/10 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-white/60 rounded-full"
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
-                <span className="text-xs text-[hsl(var(--muted-foreground))] w-7 text-right">
-                  {pct}%
-                </span>
-              </div>
-            ))}
-          </div>
-        </section>
+        <DevIssueCategoriesCard categories={issueCategories} />
       </div>
 
       {/* ── All Scans table ── */}

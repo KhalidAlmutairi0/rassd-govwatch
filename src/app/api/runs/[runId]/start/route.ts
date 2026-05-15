@@ -11,10 +11,10 @@ import path from "path";
 // POST /api/runs/[runId]/start - Start execution when client is ready
 export async function POST(
   request: Request,
-  { params }: { params: { runId: string } }
+  { params }: { params: Promise<{ runId: string }> }
 ) {
   try {
-    const runId = params.runId;
+    const { runId } = await params;
     console.log(`[START] Looking for run ${runId}`);
 
     // First check if run exists in database
@@ -125,8 +125,8 @@ async function executeRun(
       runId,
       siteId,
       artifactsDir,
-      maxElements: 20,
-      timeoutPerElement: 4000,
+      maxElements: 60,
+      timeoutPerElement: 6000,
       onBroadcast: send,  // ← browser frames + cursor events go through relay
       onProgress: (event) => {
         console.log(`[AI PLAN] Progress: ${event.phase} - ${event.description}`);
@@ -142,7 +142,7 @@ async function executeRun(
               total: event.totalSteps || 0,
               elementType: event.elementType,
               description: event.description,
-              status: event.status === "running" ? "running" : event.status === "completed" ? "passed" : "failed",
+              status: event.status === "running" ? "running" : event.status === "completed" || event.status === "warning" ? "passed" : "failed",
               responseTimeMs: event.responseTimeMs,
             },
           });

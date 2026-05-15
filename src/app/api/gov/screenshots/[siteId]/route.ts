@@ -5,9 +5,9 @@ import path from "path";
 
 export async function GET(
   _req: Request,
-  { params }: { params: { siteId: string } }
+  { params }: { params: Promise<{ siteId: string }> }
 ) {
-  const { siteId } = params;
+  const { siteId } = await params;
   const siteDir = path.join(process.cwd(), "artifacts", siteId);
 
   try {
