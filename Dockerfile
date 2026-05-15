@@ -38,8 +38,9 @@ COPY prisma ./prisma/
 RUN npm ci
 RUN npx prisma generate
 
-# Install Playwright's bundled Chromium with system deps
-RUN npx playwright install --with-deps chromium
+# Tell Playwright to use system Chromium (skip downloading its own)
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+ENV CHROME_PATH=/usr/bin/chromium
 
 # Copy source (bust cache on every deploy)
 ARG CACHEBUST=1

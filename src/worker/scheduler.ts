@@ -27,8 +27,8 @@ console.log("⏰ Scheduler running (checks every minute)");
 
 let schedulerBusy = false;
 
-// Run every minute, check which sites need execution
-cron.schedule("* * * * *", async () => {
+// Run every 5 minutes (reduce container resource pressure)
+cron.schedule("*/5 * * * *", async () => {
   // Check escalation timers every minute
   checkEscalations().catch(console.error);
 
