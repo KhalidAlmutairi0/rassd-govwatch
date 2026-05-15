@@ -164,17 +164,11 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
         "--disable-dev-shm-usage",
         "--disable-setuid-sandbox",
         "--disable-gpu",
-        "--disable-software-rasterizer",
-        "--single-process",
         "--no-zygote",
         "--disable-extensions",
         "--disable-background-networking",
-        "--disable-default-apps",
-        "--disable-sync",
-        "--disable-translate",
         "--mute-audio",
         "--no-first-run",
-        "--js-flags=--max-old-space-size=256",
       ],
     });
 

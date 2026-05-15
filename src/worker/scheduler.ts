@@ -17,6 +17,12 @@ const wsPort = parseInt(process.env.WORKER_PORT || "3003");
 initWebSocketServer(wsPort);
 console.log(`📡 WebSocket server running on ws://localhost:${wsPort}`);
 
+// Clean up stuck runs from previous deploys (queued/running without progress)
+prisma.run.updateMany({
+  where: { status: { in: ["queued", "running"] } },
+  data: { status: "error", errorJson: JSON.stringify({ message: "Cleaned up after server restart" }), finishedAt: new Date() },
+}).then((r) => { if (r.count > 0) console.log(`🧹 Cleaned up ${r.count} stuck runs`); }).catch(console.error);
+
 console.log("⏰ Scheduler running (checks every minute)");
 
 // Run every minute, check which sites need execution
