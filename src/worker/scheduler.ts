@@ -25,10 +25,18 @@ prisma.run.updateMany({
 
 console.log("⏰ Scheduler running (checks every minute)");
 
+let schedulerBusy = false;
+
 // Run every minute, check which sites need execution
 cron.schedule("* * * * *", async () => {
   // Check escalation timers every minute
   checkEscalations().catch(console.error);
+
+  if (schedulerBusy) {
+    console.log("⏳ Scheduler still busy, skipping tick");
+    return;
+  }
+  schedulerBusy = true;
 
   try {
     const sites = await prisma.site.findMany({
@@ -37,20 +45,20 @@ cron.schedule("* * * * *", async () => {
     });
 
     for (const site of sites) {
-      // Check if it's time to run (based on schedule interval)
       const minutesSinceLastRun = site.lastRunAt
         ? (Date.now() - site.lastRunAt.getTime()) / 60000
         : Infinity;
 
       if (minutesSinceLastRun < site.schedule) continue;
 
-      // Process each journey for this site
       for (const journey of site.journeys) {
         await runJourney(site, journey);
       }
     }
   } catch (error) {
     console.error("Scheduler error:", error);
+  } finally {
+    schedulerBusy = false;
   }
 });
 
