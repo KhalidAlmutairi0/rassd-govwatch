@@ -265,8 +265,16 @@ export default function LiveViewPage() {
 
   const completedSteps = steps.filter((s) => ["passed", "failed", "skipped"].includes(s.status)).length;
   const totalSteps = steps.length || 1;
-  const progressPercent = Math.min(Math.round((completedSteps / totalSteps) * 100), 100);
+  const rawPercent = Math.min(Math.round((completedSteps / totalSteps) * 100), 100);
   const isComplete = ["passed", "failed", "completed", "error"].includes(runStatus);
+  // Never let progress go backwards (sub-page discovery adds new elements)
+  const progressPercentRef = useRef(0);
+  if (isComplete) {
+    progressPercentRef.current = 100;
+  } else if (rawPercent > progressPercentRef.current) {
+    progressPercentRef.current = rawPercent;
+  }
+  const progressPercent = progressPercentRef.current;
 
   // Determine active phase based on progress
   const phaseIndex = Math.min(Math.floor(progressPercent / 25), 3);
@@ -423,7 +431,7 @@ export default function LiveViewPage() {
             />
 
             {/* Overlays on top of canvas */}
-            {hasFrame && cursorState.text && runStatus === "running" && (
+            {hasFrame && (cursorState.x > 0 || cursorState.y > 0) && runStatus === "running" && (
               <AnimatedCursor
                 targetX={cursorState.x}
                 targetY={cursorState.y}
