@@ -371,6 +371,12 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
     const safeElements = testPlan.elements.filter((e) => e.isSafe).slice(0, maxElements);
     const skippedUnsafe = testPlan.elements.filter((e) => !e.isSafe);
 
+    // Set totalSteps early so live view progress bar has the correct denominator
+    await prisma.run.update({
+      where: { id: runId },
+      data: { totalSteps: safeElements.length },
+    });
+
     if (skippedUnsafe.length > 0) {
       emit({
         type: "testing",

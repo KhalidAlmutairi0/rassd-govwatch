@@ -97,6 +97,7 @@ export default function LiveViewPage() {
   const [elapsed, setElapsed] = useState(0);
   const [currentUrl, setCurrentUrl] = useState<string>("");
   const [cursorState, setCursorState] = useState({ x: 0, y: 0, clicking: false, text: "", type: "" });
+  const [expectedTotal, setExpectedTotal] = useState(0);
 
   const wsRef = useRef<WebSocket | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -146,6 +147,11 @@ export default function LiveViewPage() {
           startTimer();
           runStatusRef.current = "running";
           setRunStatus("running");
+        }
+
+        // Use totalSteps from run record as the progress denominator
+        if (data.totalSteps && data.totalSteps > 0) {
+          setExpectedTotal(data.totalSteps);
         }
 
         if (data.elements && data.elements.length > 0) {
@@ -264,17 +270,10 @@ export default function LiveViewPage() {
   }, [runId, router]);
 
   const completedSteps = steps.filter((s) => ["passed", "failed", "skipped"].includes(s.status)).length;
-  const totalSteps = steps.length || 1;
-  const rawPercent = Math.min(Math.round((completedSteps / totalSteps) * 100), 100);
+  // Use expectedTotal from the run record (set early by executor) so progress increments gradually
+  const totalSteps = Math.max(expectedTotal, steps.length, 1);
   const isComplete = ["passed", "failed", "completed", "error"].includes(runStatus);
-  // Never let progress go backwards (sub-page discovery adds new elements)
-  const progressPercentRef = useRef(0);
-  if (isComplete) {
-    progressPercentRef.current = 100;
-  } else if (rawPercent > progressPercentRef.current) {
-    progressPercentRef.current = rawPercent;
-  }
-  const progressPercent = progressPercentRef.current;
+  const progressPercent = isComplete ? 100 : Math.min(Math.round((completedSteps / totalSteps) * 100), 99);
 
   // Determine active phase based on progress
   const phaseIndex = Math.min(Math.floor(progressPercent / 25), 3);
