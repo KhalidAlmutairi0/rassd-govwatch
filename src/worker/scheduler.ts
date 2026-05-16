@@ -19,7 +19,6 @@ console.log(`📡 WebSocket server running on ws://localhost:${wsPort}`);
 
 // ── Global scan lock: only ONE Chromium at a time ──
 let scanBusy = false;
-const SCAN_TIMEOUT_MS = 90_000;
 
 // Clean up stuck runs (running > 3 min or queued > 5 min)
 async function cleanupStuckRuns() {
@@ -134,33 +133,28 @@ async function runJourney(site: any, journey: any, existingRunId?: string) {
     // Set up artifacts directory
     const artifactsDir = path.join(process.cwd(), "artifacts", site.id, run.id);
 
-    // Execute AI test with timeout — broadcast frames so governor can watch live
-    const result = await Promise.race([
-      executeAITest({
-        url: site.baseUrl,
-        runId: run.id,
-        siteId: site.id,
-        artifactsDir,
-        maxElements: 80,
-        timeoutPerElement: 5000,
-        onBroadcast: (msg: object) => broadcast(run.id, msg),
-        onProgress: (event) => {
-          console.log(`  ${event.phase}: ${event.description}`);
-          broadcast(run.id, {
-            type: "step-update",
-            step: {
-              index: event.currentStep ?? 0,
-              total: event.totalSteps ?? 0,
-              description: event.description,
-              status: event.status === "running" ? "running" : event.status === "completed" ? "passed" : event.status,
-            },
-          });
-        },
-      }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Scan timed out after 90s")), SCAN_TIMEOUT_MS)
-      ),
-    ]);
+    // Execute AI test — broadcast frames so governor can watch live
+    const result = await executeAITest({
+      url: site.baseUrl,
+      runId: run.id,
+      siteId: site.id,
+      artifactsDir,
+      maxElements: 50,
+      timeoutPerElement: 5000,
+      onBroadcast: (msg: object) => broadcast(run.id, msg),
+      onProgress: (event) => {
+        console.log(`  ${event.phase}: ${event.description}`);
+        broadcast(run.id, {
+          type: "step-update",
+          step: {
+            index: event.currentStep ?? 0,
+            total: event.totalSteps ?? 0,
+            description: event.description,
+            status: event.status === "running" ? "running" : event.status === "completed" ? "passed" : event.status,
+          },
+        });
+      },
+    });
 
     // Normalize return shape
     const elementResults = result.results ?? (result as any).elementResults ?? [];

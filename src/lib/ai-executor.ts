@@ -202,7 +202,7 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
     });
 
     // Navigate to URL — use networkidle for SPAs that render via JS
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
     // Wait for SPA frameworks (Angular, React) to finish rendering
     await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
     await page.waitForTimeout(1500);
