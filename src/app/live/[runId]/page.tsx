@@ -121,9 +121,56 @@ export default function LiveViewPage() {
       return () => { cleanupRef.current = true; };
     }
     cleanupRef.current = false;
-    // Derive WS URL from the current browser host so it works in Docker
-    // (localhost:3000 → ws://localhost:3000) and on Render (same origin).
-    // NEXT_PUBLIC_WS_URL can override at build time for special setups.
+
+    // ── 1. Signal the worker to start the run (fire once) ──
+    if (!startedRef.current) {
+      startedRef.current = true;
+      fetch(`/api/runs/${runId}/start`, { method: "POST" })
+        .then(async (res) => {
+          const data = await res.json();
+          if (!res.ok && data.redirect) router.push(data.redirect);
+        })
+        .catch(console.error);
+    }
+
+    // ── 2. Poll DB for run status + element progress (always, independent of WS) ──
+    const pollInterval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/runs/${runId}/status`);
+        if (!res.ok) return;
+        const data = await res.json();
+
+        if (data.site?.baseUrl) setCurrentUrl((prev: string) => prev || data.site.baseUrl);
+
+        if (data.status === "running" && runStatusRef.current !== "running") {
+          startTimer();
+          runStatusRef.current = "running";
+          setRunStatus("running");
+        }
+
+        if (data.elements && data.elements.length > 0) {
+          setSteps(data.elements.map((el: any, i: number) => ({
+            index: i,
+            action: el.action || el.elementType,
+            description: el.elementText || `${el.elementType}: ${el.action}`,
+            status: el.status === "passed" || el.status === "warning" ? "passed"
+              : el.status === "failed" ? "failed"
+              : el.status === "pending" ? "running" : el.status,
+            durationMs: el.responseTimeMs,
+            error: el.error,
+          })));
+        }
+
+        if (data.status && ["passed", "failed", "error"].includes(data.status)) {
+          clearInterval(pollInterval);
+          runStatusRef.current = data.status;
+          setRunStatus(data.status);
+          if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+        }
+      } catch {}
+    }, 3000);
+
+    // ── 3. Connect WebSocket for live frames (best-effort, not required) ──
     const wsUrl =
       process.env.NEXT_PUBLIC_WS_URL ||
       (typeof window !== "undefined"
@@ -133,58 +180,7 @@ export default function LiveViewPage() {
     wsRef.current = ws;
 
     ws.onopen = () => {
-      setRunStatus("connecting");
-      if (!startedRef.current) {
-        startedRef.current = true;
-        fetch(`/api/runs/${runId}/start`, { method: "POST" })
-          .then(async (res) => {
-            const data = await res.json();
-            if (!res.ok && data.redirect) router.push(data.redirect);
-          })
-          .catch(console.error);
-
-        // Poll run status + element progress as fallback when WS is unavailable
-        const pollInterval = setInterval(async () => {
-          try {
-            const res = await fetch(`/api/runs/${runId}/status`);
-            if (!res.ok) return;
-            const data = await res.json();
-
-            // Update URL from site info
-            if (data.site?.baseUrl) setCurrentUrl((prev: string) => prev || data.site.baseUrl);
-
-            // Show "running" state in UI even without WS frames
-            if (data.status === "running" && runStatusRef.current !== "running") {
-              startTimer();
-              runStatusRef.current = "running";
-              setRunStatus("running");
-            }
-
-            // Build step list from element results in DB
-            if (data.elements && data.elements.length > 0) {
-              setSteps(data.elements.map((el: any, i: number) => ({
-                index: i,
-                action: el.action || el.elementType,
-                description: el.elementText || `${el.elementType}: ${el.action}`,
-                status: el.status === "passed" || el.status === "warning" ? "passed"
-                  : el.status === "failed" ? "failed"
-                  : el.status === "pending" ? "running" : el.status,
-                durationMs: el.responseTimeMs,
-                error: el.error,
-              })));
-            }
-
-            // Terminal state — stop polling
-            if (data.status && ["passed", "failed", "error"].includes(data.status)) {
-              clearInterval(pollInterval);
-              runStatusRef.current = data.status;
-              setRunStatus(data.status);
-              if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-            }
-          } catch {}
-        }, 3000);
-        setTimeout(() => clearInterval(pollInterval), 300000);
-      }
+      console.log("[WS] Connected to live stream");
     };
 
     ws.onmessage = (event) => {
@@ -254,18 +250,13 @@ export default function LiveViewPage() {
       }
     };
 
-    ws.onerror = () => console.error("WebSocket error");
-    ws.onclose = (event) => {
-      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-      const terminal = ["passed", "failed", "completed", "error"];
-      if (!cleanupRef.current && !terminal.includes(runStatusRef.current) && retryCountRef.current < 5) {
-        retryCountRef.current += 1;
-        setRunStatus("connecting");
-        setTimeout(() => { if (!cleanupRef.current) window.location.reload(); }, retryCountRef.current * 1000);
-      }
+    ws.onerror = () => console.error("[WS] WebSocket error (polling continues)");
+    ws.onclose = () => {
+      console.log("[WS] WebSocket closed (polling continues)");
     };
 
     return () => {
+      clearInterval(pollInterval);
       if (!cleanupRef.current) { cleanupRef.current = true; return; }
       if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close();
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }

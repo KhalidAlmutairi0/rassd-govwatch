@@ -17,24 +17,21 @@ const wsPort = parseInt(process.env.WORKER_PORT || "3003");
 initWebSocketServer(wsPort);
 console.log(`📡 WebSocket server running on ws://localhost:${wsPort}`);
 
-// Clean up stuck runs from previous deploys, then start the manual-run poll
+// Clean up stuck runs from previous deploys
 let schedulerBusy = false;
 let manualRunBusy = false;
-prisma.run.updateMany({
-  where: { status: { in: ["running"] } },
-  data: { status: "error", errorJson: JSON.stringify({ message: "Cleaned up after server restart" }), finishedAt: new Date() },
-}).then((r) => {
-  if (r.count > 0) console.log(`🧹 Cleaned up ${r.count} stuck runs`);
-  console.log("⏰ Scheduler running (checks every 5 min, manual runs every 2s)");
-  // Start the manual-run poll AFTER cleanup so we don't race
-  startManualRunPoll();
-}).catch(console.error);
 
-function startManualRunPoll() {
-  // ── Fast poll: pick up manually-queued runs every 2 seconds ──
-  // Runs execute in the worker process which owns the WS server,
-  // so broadcast() delivers frames directly to the live viewer.
-  setInterval(async () => {
+prisma.run.updateMany({
+  where: { status: { in: ["running", "queued"] }, startedAt: { lt: new Date(Date.now() - 5 * 60 * 1000) } },
+  data: { status: "error", errorJson: JSON.stringify({ message: "Cleaned up after server restart" }), finishedAt: new Date() },
+}).then((r) => { if (r.count > 0) console.log(`🧹 Cleaned up ${r.count} stuck runs`); })
+  .catch((e) => console.error("Cleanup error (non-fatal):", e));
+
+// ── Fast poll: pick up manually-queued runs every 2 seconds ──
+// Always starts unconditionally — runs in the worker process which owns the
+// WS server, so broadcast() delivers frames directly to the live viewer.
+console.log("⏰ Manual run poll starting (every 2s)");
+setInterval(async () => {
   if (manualRunBusy) return;
   try {
     const queued = await prisma.run.findFirst({
@@ -52,8 +49,7 @@ function startManualRunPoll() {
   } finally {
     manualRunBusy = false;
   }
-  }, 2000);
-}
+}, 2000);
 
 // ── Scheduled scans: every 5 minutes ──
 cron.schedule("*/5 * * * *", async () => {
