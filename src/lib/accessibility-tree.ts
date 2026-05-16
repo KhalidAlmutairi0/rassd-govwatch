@@ -17,26 +17,26 @@ export interface AccessibilityNode {
  */
 export async function getAccessibilityTree(page: Page): Promise<AccessibilityNode | null> {
   try {
-    // page.accessibility was removed in Playwright v1.44 — use evaluate instead
-    // Arrow function avoids esbuild __name decoration that breaks in-browser eval
-    const snapshot = await page.evaluate(() => {
-      const buildNode = (el: Element, depth: number): any => {
-        if (depth > 6) return null;
-        const role = el.getAttribute("role") || el.tagName.toLowerCase();
-        const name =
-          el.getAttribute("aria-label") ||
-          el.getAttribute("alt") ||
-          (el as HTMLElement).innerText?.trim().slice(0, 80) ||
-          undefined;
-        const children: any[] = [];
-        for (const child of Array.from(el.children).slice(0, 30)) {
-          const node = buildNode(child, depth + 1);
-          if (node) children.push(node);
+    // Use string-based evaluate to prevent esbuild/tsx from injecting __name
+    const snapshot = await page.evaluate(`
+      (function() {
+        function buildNode(el, depth) {
+          if (depth > 6) return null;
+          var role = el.getAttribute("role") || el.tagName.toLowerCase();
+          var name = el.getAttribute("aria-label") ||
+            el.getAttribute("alt") ||
+            (el.innerText ? el.innerText.trim().slice(0, 80) : undefined);
+          var children = [];
+          var kids = Array.from(el.children).slice(0, 30);
+          for (var i = 0; i < kids.length; i++) {
+            var node = buildNode(kids[i], depth + 1);
+            if (node) children.push(node);
+          }
+          return { role: role, name: name, children: children.length ? children : undefined };
         }
-        return { role, name, children: children.length ? children : undefined };
-      };
-      return buildNode(document.body, 0);
-    });
+        return buildNode(document.body, 0);
+      })()
+    `);
     return snapshot;
   } catch (error) {
     console.error("Failed to get accessibility tree:", error);

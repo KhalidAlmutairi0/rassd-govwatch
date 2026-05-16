@@ -45,13 +45,13 @@ setInterval(async () => {
   if (scanBusy) return;
   try {
     const queued = await prisma.run.findFirst({
-      where: { status: "queued" },
+      where: { status: "queued", triggeredBy: "scheduler" },
       include: { site: true, journey: true },
       orderBy: { startedAt: "asc" },
     });
     if (!queued) return;
 
-    console.log(`▶️  Manual run picked up: ${queued.id} for ${queued.site.name}`);
+    console.log(`▶️  Scheduled run picked up: ${queued.id} for ${queued.site.name}`);
     scanBusy = true;
     await runJourney(queued.site, queued.journey, queued.id);
   } catch (error) {
