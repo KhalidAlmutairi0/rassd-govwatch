@@ -18,8 +18,9 @@ export interface AccessibilityNode {
 export async function getAccessibilityTree(page: Page): Promise<AccessibilityNode | null> {
   try {
     // page.accessibility was removed in Playwright v1.44 — use evaluate instead
+    // Arrow function avoids esbuild __name decoration that breaks in-browser eval
     const snapshot = await page.evaluate(() => {
-      function buildNode(el: Element, depth: number): any {
+      const buildNode = (el: Element, depth: number): any => {
         if (depth > 6) return null;
         const role = el.getAttribute("role") || el.tagName.toLowerCase();
         const name =
@@ -33,7 +34,7 @@ export async function getAccessibilityTree(page: Page): Promise<AccessibilityNod
           if (node) children.push(node);
         }
         return { role, name, children: children.length ? children : undefined };
-      }
+      };
       return buildNode(document.body, 0);
     });
     return snapshot;
