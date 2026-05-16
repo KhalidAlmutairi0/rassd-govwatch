@@ -357,7 +357,10 @@ export default function LiveViewPage() {
             {activityItems.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-[hsl(var(--muted-foreground))]">
                 <div className="w-6 h-6 border-2 border-current border-t-transparent rounded-full animate-spin mb-2" />
-                <p className="text-xs">Initializing agent...</p>
+                <p className="text-xs">
+                  {runStatus === "running" ? "Agent launching browser..." : runStatus === "error" ? "Scan failed" : "Waiting for agent..."}
+                </p>
+                <p className="text-[10px] mt-1 opacity-50">Status: {runStatus}</p>
               </div>
             ) : (
               <ul className="space-y-0.5">

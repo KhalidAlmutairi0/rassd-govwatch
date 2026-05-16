@@ -17,22 +17,33 @@ const wsPort = parseInt(process.env.WORKER_PORT || "3003");
 initWebSocketServer(wsPort);
 console.log(`📡 WebSocket server running on ws://localhost:${wsPort}`);
 
-// Clean up stuck runs from previous deploys
-let schedulerBusy = false;
-let manualRunBusy = false;
+// ── Global scan lock: only ONE Chromium at a time ──
+let scanBusy = false;
+const SCAN_TIMEOUT_MS = 90_000;
 
-prisma.run.updateMany({
-  where: { status: { in: ["running", "queued"] }, startedAt: { lt: new Date(Date.now() - 5 * 60 * 1000) } },
-  data: { status: "error", errorJson: JSON.stringify({ message: "Cleaned up after server restart" }), finishedAt: new Date() },
-}).then((r) => { if (r.count > 0) console.log(`🧹 Cleaned up ${r.count} stuck runs`); })
-  .catch((e) => console.error("Cleanup error (non-fatal):", e));
+// Clean up stuck runs (running > 3 min or queued > 5 min)
+async function cleanupStuckRuns() {
+  try {
+    const r = await prisma.run.updateMany({
+      where: {
+        OR: [
+          { status: "running", startedAt: { lt: new Date(Date.now() - 3 * 60 * 1000) } },
+          { status: "queued", startedAt: { lt: new Date(Date.now() - 5 * 60 * 1000) } },
+        ],
+      },
+      data: { status: "error", errorJson: JSON.stringify({ message: "Timed out" }), finishedAt: new Date() },
+    });
+    if (r.count > 0) console.log(`🧹 Cleaned up ${r.count} stuck runs`);
+  } catch (e) {
+    console.error("Cleanup error:", e);
+  }
+}
+cleanupStuckRuns();
 
 // ── Fast poll: pick up manually-queued runs every 2 seconds ──
-// Always starts unconditionally — runs in the worker process which owns the
-// WS server, so broadcast() delivers frames directly to the live viewer.
 console.log("⏰ Manual run poll starting (every 2s)");
 setInterval(async () => {
-  if (manualRunBusy) return;
+  if (scanBusy) return;
   try {
     const queued = await prisma.run.findFirst({
       where: { status: "queued" },
@@ -41,25 +52,27 @@ setInterval(async () => {
     });
     if (!queued) return;
 
-    manualRunBusy = true;
     console.log(`▶️  Manual run picked up: ${queued.id} for ${queued.site.name}`);
+    scanBusy = true;
     await runJourney(queued.site, queued.journey, queued.id);
   } catch (error) {
     console.error("Manual run error:", error);
   } finally {
-    manualRunBusy = false;
+    scanBusy = false;
   }
 }, 2000);
+
+// ── Periodic stuck-run cleanup every 60s ──
+setInterval(() => cleanupStuckRuns(), 60_000);
 
 // ── Scheduled scans: every 5 minutes ──
 cron.schedule("*/5 * * * *", async () => {
   checkEscalations().catch(console.error);
 
-  if (schedulerBusy) {
-    console.log("⏳ Scheduler still busy, skipping tick");
+  if (scanBusy) {
+    console.log("⏳ Scan in progress, skipping scheduled tick");
     return;
   }
-  schedulerBusy = true;
 
   try {
     const sites = await prisma.site.findMany({
@@ -68,6 +81,8 @@ cron.schedule("*/5 * * * *", async () => {
     });
 
     for (const site of sites) {
+      if (scanBusy) break;
+
       const minutesSinceLastRun = site.lastRunAt
         ? (Date.now() - site.lastRunAt.getTime()) / 60000
         : Infinity;
@@ -75,13 +90,17 @@ cron.schedule("*/5 * * * *", async () => {
       if (minutesSinceLastRun < site.schedule) continue;
 
       for (const journey of site.journeys) {
-        await runJourney(site, journey);
+        if (scanBusy) break;
+        scanBusy = true;
+        try {
+          await runJourney(site, journey);
+        } finally {
+          scanBusy = false;
+        }
       }
     }
   } catch (error) {
     console.error("Scheduler error:", error);
-  } finally {
-    schedulerBusy = false;
   }
 });
 
@@ -115,28 +134,33 @@ async function runJourney(site: any, journey: any, existingRunId?: string) {
     // Set up artifacts directory
     const artifactsDir = path.join(process.cwd(), "artifacts", site.id, run.id);
 
-    // Execute AI test — broadcast frames so governor can watch live
-    const result = await executeAITest({
-      url: site.baseUrl,
-      runId: run.id,
-      siteId: site.id,
-      artifactsDir,
-      maxElements: 80,
-      timeoutPerElement: 5000,
-      onBroadcast: (msg: object) => broadcast(run.id, msg),
-      onProgress: (event) => {
-        console.log(`  ${event.phase}: ${event.description}`);
-        broadcast(run.id, {
-          type: "step-update",
-          step: {
-            index: event.currentStep ?? 0,
-            total: event.totalSteps ?? 0,
-            description: event.description,
-            status: event.status === "running" ? "running" : event.status === "completed" ? "passed" : event.status,
-          },
-        });
-      },
-    });
+    // Execute AI test with timeout — broadcast frames so governor can watch live
+    const result = await Promise.race([
+      executeAITest({
+        url: site.baseUrl,
+        runId: run.id,
+        siteId: site.id,
+        artifactsDir,
+        maxElements: 80,
+        timeoutPerElement: 5000,
+        onBroadcast: (msg: object) => broadcast(run.id, msg),
+        onProgress: (event) => {
+          console.log(`  ${event.phase}: ${event.description}`);
+          broadcast(run.id, {
+            type: "step-update",
+            step: {
+              index: event.currentStep ?? 0,
+              total: event.totalSteps ?? 0,
+              description: event.description,
+              status: event.status === "running" ? "running" : event.status === "completed" ? "passed" : event.status,
+            },
+          });
+        },
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Scan timed out after 90s")), SCAN_TIMEOUT_MS)
+      ),
+    ]);
 
     // Normalize return shape
     const elementResults = result.results ?? (result as any).elementResults ?? [];
