@@ -208,11 +208,11 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
     // Navigate to URL — use "commit" (first byte received) so we don't hang on slow SPAs
     console.log(`[BROWSER] Navigating to ${url}...`);
     try {
-      await page.goto(url, { waitUntil: "commit", timeout: 30000 });
+      await page.goto(url, { waitUntil: "commit", timeout: 20000 });
       console.log(`[BROWSER] First response received (commit)`);
     } catch (navErr: any) {
-      console.warn(`[BROWSER] goto commit failed: ${navErr.message}, retrying with longer timeout...`);
-      await page.goto(url, { waitUntil: "commit", timeout: 60000 });
+      console.warn(`[BROWSER] goto commit failed: ${navErr.message}, retrying once...`);
+      await page.goto(url, { waitUntil: "commit", timeout: 20000 });
       console.log(`[BROWSER] Retry succeeded`);
     }
     // Wait for DOM to be ready

@@ -73,6 +73,13 @@ cron.schedule("*/5 * * * *", async () => {
     return;
   }
 
+  // Skip if any run is already executing (e.g. manual scan from the API process)
+  const runningCount = await prisma.run.count({ where: { status: "running" } }).catch(() => 0);
+  if (runningCount > 0) {
+    console.log(`⏳ ${runningCount} run(s) already executing, skipping scheduled tick`);
+    return;
+  }
+
   try {
     const sites = await prisma.site.findMany({
       where: { isActive: true, schedule: { gt: 0 } },
