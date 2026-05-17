@@ -157,8 +157,8 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
       description: "Opening website..."
     });
 
-    const defaultPath = chromium.executablePath();
-    console.log(`[BROWSER] Playwright default Chromium: ${defaultPath}`);
+    console.log(`[BROWSER] Playwright Chromium: ${chromium.executablePath()}`);
+    console.log(`[BROWSER] Launching browser...`);
 
     browser = await chromium.launch({
       headless: true,
@@ -170,6 +170,7 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
         "--no-zygote",
       ],
     });
+    console.log(`[BROWSER] Browser launched OK`);
 
     const context = await browser.newContext({
       viewport: { width: 1280, height: 720 },
@@ -179,6 +180,7 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
     });
 
     page = await context.newPage();
+    console.log(`[BROWSER] Page created, starting screencast...`);
 
     // Collect console logs
     page.on("console", (msg) => {
@@ -203,10 +205,14 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
       await cdpSession!.send("Page.screencastFrameAck", { sessionId }).catch(() => {});
     });
 
-    // Navigate to URL — use networkidle for SPAs that render via JS
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    // Navigate to URL
+    console.log(`[BROWSER] Navigating to ${url}...`);
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
+    console.log(`[BROWSER] Page loaded (domcontentloaded)`);
     // Wait for SPA frameworks (Angular, React) to finish rendering
-    await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+    await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {
+      console.log(`[BROWSER] networkidle timed out (non-fatal)`);
+    });
     await page.waitForTimeout(1500);
 
     // Dismiss cookie banners, splash screens, survey popups, and modal overlays
@@ -346,7 +352,9 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
       description: "🧠 AI is analyzing the page and creating a test plan..."
     });
 
+    console.log(`[AI] Sending page data to AI for test plan generation...`);
     const testPlan = await analyzePageAndCreatePlan(fullScreenshot, htmlStructure, url, metadata, formattedAccessibilityTree);
+    console.log(`[AI] Test plan received: ${testPlan.elements.length} elements`);
 
     // Store AI understanding in database
     await prisma.run.update({
