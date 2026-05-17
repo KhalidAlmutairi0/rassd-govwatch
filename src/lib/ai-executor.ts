@@ -223,15 +223,27 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
       throw new Error(`Cannot reach ${url} from this server: ${preCheckErr.message}. The site may be geo-restricted or blocking cloud IPs.`);
     }
 
-    // Navigate to URL
+    // Navigate to URL — use "commit" (first byte received) so we don't hang on slow SPAs
     console.log(`[BROWSER] Navigating to ${url}...`);
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
-    console.log(`[BROWSER] Page loaded (domcontentloaded)`);
+    try {
+      await page.goto(url, { waitUntil: "commit", timeout: 30000 });
+      console.log(`[BROWSER] First response received (commit)`);
+    } catch (navErr: any) {
+      console.warn(`[BROWSER] goto commit failed: ${navErr.message}, retrying with longer timeout...`);
+      await page.goto(url, { waitUntil: "commit", timeout: 60000 });
+      console.log(`[BROWSER] Retry succeeded`);
+    }
+    // Wait for DOM to be ready
+    await page.waitForLoadState("domcontentloaded", { timeout: 30000 }).catch(() => {
+      console.log(`[BROWSER] domcontentloaded timed out (continuing with partial load)`);
+    });
+    console.log(`[BROWSER] DOM ready`);
     // Wait for SPA frameworks (Angular, React) to finish rendering
     await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {
       console.log(`[BROWSER] networkidle timed out (non-fatal)`);
     });
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(2000);
+    console.log(`[BROWSER] Page ready, proceeding with analysis`);
 
     // Dismiss cookie banners, splash screens, survey popups, and modal overlays
     // Try multiple rounds — some sites stack popups
