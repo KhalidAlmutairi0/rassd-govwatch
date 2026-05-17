@@ -8,13 +8,30 @@ import { processRunResult } from "@/lib/incidents";
 import { storeSiteScore } from "@/lib/scoring";
 import path from "path";
 
+let _frameCount = 0;
+
 function broadcastToLive(runId: string, message: object) {
   const sessions = (globalThis as any).__liveSessions as
     | Map<string, { runId: string; clients: Set<any> }>
     | undefined;
-  if (!sessions) return;
+  if (!sessions) {
+    if (_frameCount === 0) console.log(`[BROADCAST] WARNING: __liveSessions not found on globalThis`);
+    return;
+  }
   const session = sessions.get(runId);
-  if (!session) return;
+  if (!session) {
+    if (_frameCount === 0) console.log(`[BROADCAST] WARNING: no session for runId=${runId}, available sessions: [${[...sessions.keys()].join(", ")}]`);
+    return;
+  }
+  const msgType = (message as any).type;
+  if (msgType === "browser-frame") {
+    _frameCount++;
+    if (_frameCount === 1 || _frameCount % 50 === 0) {
+      console.log(`[BROADCAST] Sending frame #${_frameCount} to ${session.clients.size} client(s) for run ${runId}`);
+    }
+  } else {
+    console.log(`[BROADCAST] Sending ${msgType} to ${session.clients.size} client(s) for run ${runId}`);
+  }
   const data = JSON.stringify(message);
   for (const client of session.clients) {
     if (client.readyState === 1) client.send(data);
