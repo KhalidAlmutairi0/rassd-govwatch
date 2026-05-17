@@ -205,24 +205,6 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
       await cdpSession!.send("Page.screencastFrameAck", { sessionId }).catch(() => {});
     });
 
-    // Pre-check: verify site is reachable before spending time on full page load
-    console.log(`[BROWSER] Pre-check: is ${url} reachable?`);
-    try {
-      const controller = new AbortController();
-      const preCheckTimeout = setTimeout(() => controller.abort(), 10000);
-      const resp = await fetch(url, {
-        method: "HEAD",
-        signal: controller.signal,
-        redirect: "follow",
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; GovWatch/1.0)" },
-      }).catch((e: any) => { throw new Error(`Site unreachable: ${e.message}`); });
-      clearTimeout(preCheckTimeout);
-      console.log(`[BROWSER] Pre-check OK: HTTP ${resp.status}`);
-    } catch (preCheckErr: any) {
-      console.error(`[BROWSER] Pre-check FAILED: ${preCheckErr.message}`);
-      throw new Error(`Cannot reach ${url} from this server: ${preCheckErr.message}. The site may be geo-restricted or blocking cloud IPs.`);
-    }
-
     // Navigate to URL — use "commit" (first byte received) so we don't hang on slow SPAs
     console.log(`[BROWSER] Navigating to ${url}...`);
     try {

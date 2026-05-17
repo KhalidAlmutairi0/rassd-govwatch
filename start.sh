@@ -11,10 +11,10 @@ if [ "$SITE_COUNT" = "0" ]; then
   npx tsx prisma/seed.ts
 fi
 
-# One-time migration: replace geo-blocked sites with globally accessible ones
-HAS_OLD=$(node -e "const{PrismaClient}=require('@prisma/client');const p=new PrismaClient();p.site.findFirst({where:{baseUrl:'https://www.absher.sa'}}).then(s=>{console.log(s?'yes':'no');p.\$disconnect()})" 2>/dev/null || echo "no")
-if [ "$HAS_OLD" = "yes" ]; then
-  echo "Migrating sites to globally accessible URLs..."
+# One-time migration: restore original Saudi gov sites if they were replaced
+HAS_NEW=$(node -e "const{PrismaClient}=require('@prisma/client');const p=new PrismaClient();p.site.findFirst({where:{baseUrl:'https://www.vision2030.gov.sa'}}).then(s=>{console.log(s?'yes':'no');p.\$disconnect()})" 2>/dev/null || echo "no")
+if [ "$HAS_NEW" = "yes" ]; then
+  echo "Restoring original Saudi gov site URLs..."
   npx tsx prisma/migrate-sites.ts
 fi
 

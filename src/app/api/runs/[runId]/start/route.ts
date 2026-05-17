@@ -1,13 +1,25 @@
 // src/app/api/runs/[runId]/start/route.ts
 // Triggers scan execution directly in the Next.js process.
-// This removes the dependency on the worker being available/idle.
+// Broadcasts live frames through global.__liveSessions (set by server.js).
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { executeAITest } from "@/lib/ai-executor";
 import { processRunResult } from "@/lib/incidents";
 import { storeSiteScore } from "@/lib/scoring";
-import { createRelayConnection, relaySend } from "@/lib/ws-server";
 import path from "path";
+
+function broadcastToLive(runId: string, message: object) {
+  const sessions = (globalThis as any).__liveSessions as
+    | Map<string, { runId: string; clients: Set<any> }>
+    | undefined;
+  if (!sessions) return;
+  const session = sessions.get(runId);
+  if (!session) return;
+  const data = JSON.stringify(message);
+  for (const client of session.clients) {
+    if (client.readyState === 1) client.send(data);
+  }
+}
 
 export async function POST(
   request: Request,
@@ -62,9 +74,7 @@ async function executeScan(run: any) {
   const { id: runId, site, journey } = run;
   const artifactsDir = path.join(process.cwd(), "artifacts", site.id, runId);
 
-  // Relay WS broadcasts through the worker's WS server so browsers get live frames
-  const relay = createRelayConnection(runId);
-  const send = (msg: object) => relaySend(relay, msg);
+  const send = (msg: object) => broadcastToLive(runId, msg);
 
   console.log(`[SCAN] Starting AI test for ${site.name} (run ${runId})`);
   send({ type: "run-status", status: "running" });
@@ -141,9 +151,5 @@ async function executeScan(run: any) {
     });
     send({ type: "run-complete", status: "error" });
     console.error(`[SCAN] ${site.name}: ${error.message}`);
-  } finally {
-    if (relay && relay.readyState !== undefined) {
-      try { relay.close(); } catch {}
-    }
   }
 }

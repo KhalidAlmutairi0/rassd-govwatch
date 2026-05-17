@@ -1,7 +1,7 @@
 // Custom Next.js server
-// - Serves Next.js on PORT (what Render assigns)
-// - Proxies WebSocket connections (/live/* and /relay/*) to the scheduler's
-//   internal WS server on WORKER_PORT (3003) so only one port is needed publicly.
+// - Serves Next.js on PORT
+// - Handles WebSocket connections for /live/* directly (no proxy needed)
+// - Shares live sessions with API routes via global.__liveSessions
 "use strict";
 
 const { createServer } = require("http");
@@ -11,10 +11,13 @@ const { WebSocketServer, WebSocket } = require("ws");
 
 const dev = process.env.NODE_ENV !== "production";
 const port = parseInt(process.env.PORT || "3000", 10);
-const wsPort = parseInt(process.env.WORKER_PORT || "3003", 10);
 
 const app = next({ dev, hostname: "0.0.0.0", port });
 const handle = app.getRequestHandler();
+
+// Live-view sessions shared with Next.js API routes via globalThis
+const sessions = new Map();
+global.__liveSessions = sessions;
 
 app.prepare().then(() => {
   const httpServer = createServer(async (req, res) => {
@@ -28,15 +31,42 @@ app.prepare().then(() => {
     }
   });
 
-  // Proxy WebSocket upgrade requests → scheduler's internal WS server
+  // WebSocket server — handles /live/{runId} connections directly
+  const wss = new WebSocketServer({ noServer: true });
+
   httpServer.on("upgrade", (req, socket, head) => {
     const { pathname } = parse(req.url);
 
-    if (
-      pathname &&
-      (pathname.startsWith("/live/") || pathname.startsWith("/relay/"))
-    ) {
-      proxyWebSocket(req, socket, head, pathname, wsPort);
+    if (pathname && pathname.startsWith("/live/")) {
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        const parts = pathname.split("/").filter(Boolean);
+        const runId = parts[parts.length - 1];
+        if (!runId) { ws.close(1008, "Missing runId"); return; }
+
+        let session = sessions.get(runId);
+        if (!session) {
+          session = { runId, clients: new Set() };
+          sessions.set(runId, session);
+        }
+        session.clients.add(ws);
+        console.log(`[WS] Live viewer connected for run ${runId} (${session.clients.size} viewer(s))`);
+
+        // Keepalive ping every 25s to prevent Railway/proxy idle timeout
+        const keepalive = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) ws.ping();
+        }, 25000);
+
+        ws.on("pong", () => { /* connection alive */ });
+
+        ws.on("close", () => {
+          clearInterval(keepalive);
+          session.clients.delete(ws);
+          if (session.clients.size === 0) sessions.delete(runId);
+        });
+        ws.on("error", () => {
+          clearInterval(keepalive);
+        });
+      });
     } else {
       socket.destroy();
     }
@@ -44,68 +74,6 @@ app.prepare().then(() => {
 
   httpServer.listen(port, "0.0.0.0", () => {
     console.log(`> Next.js ready on http://0.0.0.0:${port}`);
-    console.log(
-      `> WebSocket proxy: port ${port} → ws://localhost:${wsPort} (paths /live/* /relay/*)`
-    );
+    console.log(`> WebSocket: /live/* handled on port ${port} (no proxy)`);
   });
 });
-
-/**
- * Proxy an HTTP upgrade (WebSocket) request to the internal WS server.
- * Retries a few times to handle race where scheduler hasn't started yet.
- */
-function proxyWebSocket(req, socket, head, pathname, targetPort, attempt = 0) {
-  const target = new WebSocket(`ws://localhost:${targetPort}${pathname}`, {
-    headers: {
-      host: `localhost:${targetPort}`,
-      "x-forwarded-for":
-        req.headers["x-forwarded-for"] || req.socket.remoteAddress,
-    },
-  });
-
-  target.on("open", () => {
-    // Complete the WebSocket handshake with the browser client
-    const proxyWss = new WebSocketServer({ noServer: true });
-    proxyWss.handleUpgrade(req, socket, head, (clientWs) => {
-      // Bridge messages bidirectionally
-      clientWs.on("message", (data, isBinary) => {
-        if (target.readyState === WebSocket.OPEN) {
-          target.send(data, { binary: isBinary });
-        }
-      });
-      target.on("message", (data, isBinary) => {
-        if (clientWs.readyState === WebSocket.OPEN) {
-          clientWs.send(data, { binary: isBinary });
-        }
-      });
-
-      clientWs.on("close", (code, reason) => {
-        if (target.readyState !== WebSocket.CLOSED) target.close(code, reason);
-      });
-      target.on("close", (code, reason) => {
-        if (clientWs.readyState !== WebSocket.CLOSED) clientWs.close(code, reason);
-      });
-
-      clientWs.on("error", () => {
-        if (target.readyState !== WebSocket.CLOSED) target.close();
-      });
-      target.on("error", () => {
-        if (clientWs.readyState !== WebSocket.CLOSED) clientWs.close();
-      });
-    });
-  });
-
-  target.on("error", (err) => {
-    if (attempt < 8) {
-      // Retry with back-off — scheduler may still be starting
-      const delay = Math.min(500 * (attempt + 1), 3000);
-      setTimeout(() => proxyWebSocket(req, socket, head, pathname, targetPort, attempt + 1), delay);
-    } else {
-      console.error(
-        `[WS Proxy] Could not connect to ws://localhost:${targetPort}${pathname} after ${attempt} attempts:`,
-        err.message
-      );
-      if (!socket.destroyed) socket.destroy();
-    }
-  });
-}

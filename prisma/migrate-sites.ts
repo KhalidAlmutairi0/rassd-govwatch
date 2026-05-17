@@ -1,84 +1,84 @@
 // prisma/migrate-sites.ts
-// One-time migration: replace geo-blocked Saudi gov sites with globally accessible ones
+// One-time migration: restore original Saudi gov sites
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
 const URL_MIGRATION: Record<string, { url: string; name: string; nameAr: string; ministry: string; desc: string }> = {
-  "https://www.absher.sa": {
-    url: "https://www.vision2030.gov.sa",
-    name: "Saudi Vision 2030",
-    nameAr: "رؤية السعودية 2030",
-    ministry: "مكتب رؤية 2030",
-    desc: "الموقع الرسمي لرؤية المملكة 2030",
+  "https://www.vision2030.gov.sa": {
+    url: "https://www.absher.sa",
+    name: "Absher",
+    nameAr: "أبشر",
+    ministry: "وزارة الداخلية",
+    desc: "بوابة الخدمات الحكومية الإلكترونية",
   },
-  "https://www.my.gov.sa": {
-    url: "https://www.spa.gov.sa",
-    name: "Saudi Press Agency",
-    nameAr: "وكالة الأنباء السعودية",
-    ministry: "وكالة الأنباء السعودية",
-    desc: "وكالة الأنباء الرسمية للمملكة",
+  "https://www.spa.gov.sa": {
+    url: "https://www.my.gov.sa",
+    name: "Unified National Platform",
+    nameAr: "المنصة الوطنية الموحدة",
+    ministry: "هيئة الحكومة الرقمية",
+    desc: "المنصة الوطنية الموحدة للخدمات الحكومية",
   },
-  "https://www.moh.gov.sa": {
-    url: "https://www.ksu.edu.sa",
-    name: "King Saud University",
-    nameAr: "جامعة الملك سعود",
+  "https://www.ksu.edu.sa": {
+    url: "https://www.moh.gov.sa",
+    name: "Sehhaty",
+    nameAr: "صحتي",
+    ministry: "وزارة الصحة",
+    desc: "منصة الخدمات الصحية الإلكترونية",
+  },
+  "https://www.aramco.com": {
+    url: "https://qiwa.sa",
+    name: "Qiwa",
+    nameAr: "قوى",
+    ministry: "وزارة الموارد البشرية والتنمية الاجتماعية",
+    desc: "منصة سوق العمل السعودي",
+  },
+  "https://www.neom.com": {
+    url: "https://www.hrdf.org.sa",
+    name: "Hadaf",
+    nameAr: "هدف",
+    ministry: "صندوق تنمية الموارد البشرية",
+    desc: "صندوق تنمية الموارد البشرية - هدف",
+  },
+  "https://www.visitsaudi.com": {
+    url: "https://tawakkalna.sdaia.gov.sa",
+    name: "Tawakkalna",
+    nameAr: "توكلنا",
+    ministry: "الهيئة السعودية للبيانات والذكاء الاصطناعي",
+    desc: "تطبيق توكلنا للخدمات الرقمية",
+  },
+  "https://www.kaust.edu.sa": {
+    url: "https://rbu.edu.sa",
+    name: "Unified Admission",
+    nameAr: "القبول الموحد",
     ministry: "وزارة التعليم",
-    desc: "جامعة الملك سعود - الرياض",
+    desc: "بوابة القبول الموحد للجامعات",
   },
-  "https://qiwa.sa": {
-    url: "https://www.aramco.com",
-    name: "Saudi Aramco",
-    nameAr: "أرامكو السعودية",
-    ministry: "أرامكو السعودية",
-    desc: "شركة أرامكو السعودية",
+  "https://www.saudigazette.com.sa": {
+    url: "https://balady.gov.sa",
+    name: "Balady",
+    nameAr: "بلدي",
+    ministry: "وزارة الشؤون البلدية والقروية والإسكان",
+    desc: "منصة الخدمات البلدية الإلكترونية",
   },
-  "https://www.hrdf.org.sa": {
-    url: "https://www.neom.com",
-    name: "NEOM",
-    nameAr: "نيوم",
-    ministry: "مشروع نيوم",
-    desc: "مشروع نيوم - مدينة المستقبل",
+  "https://www.saudia.com": {
+    url: "https://www.gosi.gov.sa",
+    name: "Taminaty",
+    nameAr: "تأميناتي",
+    ministry: "المؤسسة العامة للتأمينات الاجتماعية",
+    desc: "منصة التأمينات الاجتماعية",
   },
-  "https://tawakkalna.sdaia.gov.sa": {
-    url: "https://www.visitsaudi.com",
-    name: "Saudi Tourism",
-    nameAr: "هيئة السياحة السعودية",
-    ministry: "هيئة السياحة",
-    desc: "الهيئة السعودية للسياحة",
-  },
-  "https://rbu.edu.sa": {
-    url: "https://www.kaust.edu.sa",
-    name: "KAUST",
-    nameAr: "كاوست",
-    ministry: "جامعة الملك عبدالله للعلوم والتقنية",
-    desc: "جامعة الملك عبدالله للعلوم والتقنية",
-  },
-  "https://balady.gov.sa": {
-    url: "https://www.saudigazette.com.sa",
-    name: "Saudi Gazette",
-    nameAr: "سعودي جازيت",
-    ministry: "صحيفة سعودي جازيت",
-    desc: "صحيفة سعودي جازيت الإلكترونية",
-  },
-  "https://www.gosi.gov.sa": {
-    url: "https://www.saudia.com",
-    name: "Saudia Airlines",
-    nameAr: "الخطوط السعودية",
-    ministry: "الخطوط الجوية العربية السعودية",
-    desc: "الخطوط الجوية العربية السعودية",
-  },
-  "https://www.najiz.sa": {
-    url: "https://www.saudiexchange.sa",
-    name: "Saudi Exchange",
-    nameAr: "تداول السعودية",
-    ministry: "تداول السعودية",
-    desc: "السوق المالية السعودية - تداول",
+  "https://www.saudiexchange.sa": {
+    url: "https://www.najiz.sa",
+    name: "Najiz",
+    nameAr: "ناجز",
+    ministry: "وزارة العدل",
+    desc: "منصة الخدمات العدلية الإلكترونية",
   },
 };
 
 async function main() {
-  console.log("🔄 Migrating sites to globally accessible URLs...\n");
+  console.log("🔄 Restoring original Saudi gov site URLs...\n");
 
   const sites = await prisma.site.findMany();
 

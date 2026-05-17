@@ -14,83 +14,83 @@ function hashPassword(password: string): string {
 // ── Preset sites ──────────────────────────────────────────────────────────────
 const PRESET_SITES = [
   {
-    name: "Saudi Vision 2030",
-    nameAr: "رؤية السعودية 2030",
-    ministryName: "مكتب رؤية 2030",
-    baseUrl: "https://www.vision2030.gov.sa",
-    description: "الموقع الرسمي لرؤية المملكة 2030",
+    name: "Absher",
+    nameAr: "أبشر",
+    ministryName: "وزارة الداخلية",
+    baseUrl: "https://www.absher.sa",
+    description: "بوابة الخدمات الحكومية الإلكترونية",
     schedule: 10,
   },
   {
-    name: "Saudi Press Agency",
-    nameAr: "وكالة الأنباء السعودية",
-    ministryName: "وكالة الأنباء السعودية",
-    baseUrl: "https://www.spa.gov.sa",
-    description: "وكالة الأنباء الرسمية للمملكة",
+    name: "Unified National Platform",
+    nameAr: "المنصة الوطنية الموحدة",
+    ministryName: "هيئة الحكومة الرقمية",
+    baseUrl: "https://www.my.gov.sa",
+    description: "المنصة الوطنية الموحدة للخدمات الحكومية",
     schedule: 10,
   },
   {
-    name: "King Saud University",
-    nameAr: "جامعة الملك سعود",
+    name: "Sehhaty",
+    nameAr: "صحتي",
+    ministryName: "وزارة الصحة",
+    baseUrl: "https://www.moh.gov.sa",
+    description: "منصة الخدمات الصحية الإلكترونية",
+    schedule: 10,
+  },
+  {
+    name: "Qiwa",
+    nameAr: "قوى",
+    ministryName: "وزارة الموارد البشرية والتنمية الاجتماعية",
+    baseUrl: "https://qiwa.sa",
+    description: "منصة سوق العمل السعودي",
+    schedule: 10,
+  },
+  {
+    name: "Hadaf",
+    nameAr: "هدف",
+    ministryName: "صندوق تنمية الموارد البشرية",
+    baseUrl: "https://www.hrdf.org.sa",
+    description: "صندوق تنمية الموارد البشرية - هدف",
+    schedule: 10,
+  },
+  {
+    name: "Tawakkalna",
+    nameAr: "توكلنا",
+    ministryName: "الهيئة السعودية للبيانات والذكاء الاصطناعي",
+    baseUrl: "https://tawakkalna.sdaia.gov.sa",
+    description: "تطبيق توكلنا للخدمات الرقمية",
+    schedule: 10,
+  },
+  {
+    name: "Unified Admission",
+    nameAr: "القبول الموحد",
     ministryName: "وزارة التعليم",
-    baseUrl: "https://www.ksu.edu.sa",
-    description: "جامعة الملك سعود - الرياض",
+    baseUrl: "https://rbu.edu.sa",
+    description: "بوابة القبول الموحد للجامعات",
     schedule: 10,
   },
   {
-    name: "Saudi Aramco",
-    nameAr: "أرامكو السعودية",
-    ministryName: "أرامكو السعودية",
-    baseUrl: "https://www.aramco.com",
-    description: "شركة أرامكو السعودية",
+    name: "Balady",
+    nameAr: "بلدي",
+    ministryName: "وزارة الشؤون البلدية والقروية والإسكان",
+    baseUrl: "https://balady.gov.sa",
+    description: "منصة الخدمات البلدية الإلكترونية",
     schedule: 10,
   },
   {
-    name: "NEOM",
-    nameAr: "نيوم",
-    ministryName: "مشروع نيوم",
-    baseUrl: "https://www.neom.com",
-    description: "مشروع نيوم - مدينة المستقبل",
+    name: "Taminaty",
+    nameAr: "تأميناتي",
+    ministryName: "المؤسسة العامة للتأمينات الاجتماعية",
+    baseUrl: "https://www.gosi.gov.sa",
+    description: "منصة التأمينات الاجتماعية",
     schedule: 10,
   },
   {
-    name: "Saudi Tourism",
-    nameAr: "هيئة السياحة السعودية",
-    ministryName: "هيئة السياحة",
-    baseUrl: "https://www.visitsaudi.com",
-    description: "الهيئة السعودية للسياحة",
-    schedule: 10,
-  },
-  {
-    name: "KAUST",
-    nameAr: "كاوست",
-    ministryName: "جامعة الملك عبدالله للعلوم والتقنية",
-    baseUrl: "https://www.kaust.edu.sa",
-    description: "جامعة الملك عبدالله للعلوم والتقنية",
-    schedule: 10,
-  },
-  {
-    name: "Saudi Gazette",
-    nameAr: "سعودي جازيت",
-    ministryName: "صحيفة سعودي جازيت",
-    baseUrl: "https://www.saudigazette.com.sa",
-    description: "صحيفة سعودي جازيت الإلكترونية",
-    schedule: 10,
-  },
-  {
-    name: "Saudia Airlines",
-    nameAr: "الخطوط السعودية",
-    ministryName: "الخطوط الجوية العربية السعودية",
-    baseUrl: "https://www.saudia.com",
-    description: "الخطوط الجوية العربية السعودية",
-    schedule: 10,
-  },
-  {
-    name: "Saudi Exchange",
-    nameAr: "تداول السعودية",
-    ministryName: "تداول السعودية",
-    baseUrl: "https://www.saudiexchange.sa",
-    description: "السوق المالية السعودية - تداول",
+    name: "Najiz",
+    nameAr: "ناجز",
+    ministryName: "وزارة العدل",
+    baseUrl: "https://www.najiz.sa",
+    description: "منصة الخدمات العدلية الإلكترونية",
     schedule: 10,
   },
 ];
@@ -198,7 +198,7 @@ async function main() {
   console.log("\n📊 Creating initial score snapshots...");
   const seedScores = [
     {
-      url: "https://www.vision2030.gov.sa",
+      url: "https://www.absher.sa",
       history: [
         { weeksAgo: 4, overall: 88, qa: 90, perf: 92, access: 82, ux: 89 },
         { weeksAgo: 3, overall: 86, qa: 88, perf: 90, access: 80, ux: 87 },
@@ -208,7 +208,7 @@ async function main() {
       ],
     },
     {
-      url: "https://www.spa.gov.sa",
+      url: "https://www.my.gov.sa",
       history: [
         { weeksAgo: 4, overall: 80, qa: 82, perf: 85, access: 72, ux: 81 },
         { weeksAgo: 3, overall: 82, qa: 84, perf: 86, access: 74, ux: 83 },
@@ -218,7 +218,7 @@ async function main() {
       ],
     },
     {
-      url: "https://www.ksu.edu.sa",
+      url: "https://www.moh.gov.sa",
       history: [
         { weeksAgo: 4, overall: 74, qa: 75, perf: 78, access: 68, ux: 75 },
         { weeksAgo: 3, overall: 76, qa: 77, perf: 80, access: 70, ux: 77 },
@@ -228,7 +228,7 @@ async function main() {
       ],
     },
     {
-      url: "https://www.aramco.com",
+      url: "https://qiwa.sa",
       history: [
         { weeksAgo: 4, overall: 64, qa: 65, perf: 60, access: 60, ux: 65 },
         { weeksAgo: 3, overall: 66, qa: 67, perf: 62, access: 62, ux: 67 },
@@ -238,7 +238,7 @@ async function main() {
       ],
     },
     {
-      url: "https://www.neom.com",
+      url: "https://www.hrdf.org.sa",
       history: [
         { weeksAgo: 4, overall: 78, qa: 79, perf: 82, access: 72, ux: 79 },
         { weeksAgo: 3, overall: 80, qa: 81, perf: 84, access: 74, ux: 81 },
@@ -248,7 +248,7 @@ async function main() {
       ],
     },
     {
-      url: "https://www.visitsaudi.com",
+      url: "https://tawakkalna.sdaia.gov.sa",
       history: [
         { weeksAgo: 4, overall: 90, qa: 92, perf: 94, access: 84, ux: 91 },
         { weeksAgo: 3, overall: 91, qa: 93, perf: 94, access: 86, ux: 92 },
@@ -258,7 +258,7 @@ async function main() {
       ],
     },
     {
-      url: "https://www.kaust.edu.sa",
+      url: "https://rbu.edu.sa",
       history: [
         { weeksAgo: 4, overall: 70, qa: 72, perf: 74, access: 64, ux: 71 },
         { weeksAgo: 3, overall: 72, qa: 74, perf: 76, access: 66, ux: 73 },
@@ -268,7 +268,7 @@ async function main() {
       ],
     },
     {
-      url: "https://www.saudigazette.com.sa",
+      url: "https://balady.gov.sa",
       history: [
         { weeksAgo: 4, overall: 75, qa: 77, perf: 80, access: 69, ux: 76 },
         { weeksAgo: 3, overall: 76, qa: 78, perf: 81, access: 70, ux: 77 },
@@ -278,7 +278,7 @@ async function main() {
       ],
     },
     {
-      url: "https://www.saudia.com",
+      url: "https://www.gosi.gov.sa",
       history: [
         { weeksAgo: 4, overall: 82, qa: 84, perf: 86, access: 76, ux: 83 },
         { weeksAgo: 3, overall: 83, qa: 85, perf: 87, access: 77, ux: 84 },
@@ -288,7 +288,7 @@ async function main() {
       ],
     },
     {
-      url: "https://www.saudiexchange.sa",
+      url: "https://www.najiz.sa",
       history: [
         { weeksAgo: 4, overall: 86, qa: 88, perf: 90, access: 80, ux: 87 },
         { weeksAgo: 3, overall: 87, qa: 89, perf: 91, access: 81, ux: 88 },
