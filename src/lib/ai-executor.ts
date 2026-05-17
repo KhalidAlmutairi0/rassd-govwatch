@@ -8,10 +8,6 @@ import { promises as fs } from "fs";
 import path from "path";
 import { getAccessibilityTree, formatAccessibilityTree } from "./accessibility-tree";
 
-function findChromiumPath(): string | undefined {
-  if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
-  return undefined;
-}
 
 function parseSummaryText(raw: string): {
   executive: string | null;
@@ -161,14 +157,12 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
       description: "Opening website..."
     });
 
-    const chromePath = findChromiumPath();
-    if (chromePath) console.log(`[BROWSER] Using Chromium at: ${chromePath}`);
+    const defaultPath = chromium.executablePath();
+    console.log(`[BROWSER] Playwright default Chromium: ${defaultPath}`);
 
     browser = await chromium.launch({
-      executablePath: chromePath,
       headless: true,
       args: [
-        "--headless=new",
         "--no-sandbox",
         "--disable-dev-shm-usage",
         "--disable-setuid-sandbox",

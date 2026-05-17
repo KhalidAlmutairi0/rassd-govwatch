@@ -1,8 +1,7 @@
 FROM node:20-slim
 
-# Install Chromium + system deps for Playwright
+# Install system dependencies required by Chromium
 RUN apt-get update && apt-get install -y \
-    chromium \
     fonts-noto \
     fonts-noto-cjk \
     ca-certificates \
@@ -38,15 +37,13 @@ COPY prisma ./prisma/
 RUN npm ci
 RUN npx prisma generate
 
-# Tell Playwright to use system Chromium (skip downloading its own)
-ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
-ENV CHROME_PATH=/usr/bin/chromium
+# Install Playwright's own Chromium (guaranteed compatible)
+RUN npx playwright install chromium
 
-# Copy source (bust cache on every deploy)
-ARG CACHEBUST=1
+# Copy source
 COPY . .
 
-# Build Next.js — SQLite needs a dummy path at build time
+# Build Next.js
 RUN DATABASE_URL="file:./build.db" npm run build && rm -f build.db
 
 # Create dirs for artifacts and persistent data

@@ -1,20 +1,6 @@
 #!/bin/sh
 set -e
 
-# Detect Chromium — prefer Playwright's own bundled binary (guaranteed compatible)
-if [ -z "$CHROME_PATH" ]; then
-  PW_CHROMIUM=$(node -e "try{console.log(require('playwright').chromium.executablePath())}catch{}" 2>/dev/null || true)
-  if [ -n "$PW_CHROMIUM" ] && [ -f "$PW_CHROMIUM" ]; then
-    export CHROME_PATH="$PW_CHROMIUM"
-  fi
-fi
-
-if [ -n "$CHROME_PATH" ]; then
-  echo "Chromium found at: $CHROME_PATH"
-else
-  echo "WARNING: No Chromium found — scans will fail"
-fi
-
 echo "Pushing database schema..."
 npx prisma db push --skip-generate
 
