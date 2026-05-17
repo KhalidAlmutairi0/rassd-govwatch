@@ -10,6 +10,7 @@ import { execSync } from "child_process";
 
 function findChromiumPath(): string | undefined {
   if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
+
   const candidates = [
     "/usr/bin/chromium",
     "/usr/bin/chromium-browser",
@@ -17,12 +18,36 @@ function findChromiumPath(): string | undefined {
     "/usr/bin/google-chrome-stable",
   ];
   for (const p of candidates) {
-    try { require("fs").accessSync(p); return p; } catch {}
+    try { require("fs").accessSync(p, require("fs").constants.X_OK); return p; } catch {}
   }
+
+  // On Nixpacks (Railway) chromium is in /nix/store/…/bin/
   try {
-    const found = execSync("which chromium || which chromium-browser || which google-chrome 2>/dev/null", { encoding: "utf8" }).trim();
-    if (found) return found;
+    const found = execSync(
+      'find /nix/store -maxdepth 3 -name "chromium" -type f 2>/dev/null | head -1',
+      { encoding: "utf8", timeout: 5000 }
+    ).trim();
+    if (found) { console.log(`[BROWSER] Found Nix chromium: ${found}`); return found; }
   } catch {}
+
+  // Also check wrapper scripts that Nix creates
+  try {
+    const found = execSync(
+      'find /nix/store -maxdepth 4 -path "*/bin/chromium" 2>/dev/null | head -1',
+      { encoding: "utf8", timeout: 5000 }
+    ).trim();
+    if (found) { console.log(`[BROWSER] Found Nix chromium bin: ${found}`); return found; }
+  } catch {}
+
+  // Try which with full PATH
+  for (const name of ["chromium", "chromium-browser", "google-chrome"]) {
+    try {
+      const found = execSync(`which ${name} 2>/dev/null`, { encoding: "utf8" }).trim();
+      if (found) return found;
+    } catch {}
+  }
+
+  console.warn("[BROWSER] No system chromium found — falling back to Playwright bundled browser");
   return undefined;
 }
 import { getAccessibilityTree, formatAccessibilityTree } from "./accessibility-tree";
