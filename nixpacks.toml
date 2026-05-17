@@ -13,7 +13,6 @@ nixPkgs = [
 cmds = [
   "npm ci",
   "npx prisma generate",
-  "PLAYWRIGHT_BROWSERS_PATH=/usr/bin npx playwright install chromium",
 ]
 
 [phases.build]
@@ -21,3 +20,6 @@ cmds = ["npm run build"]
 
 [start]
 cmd = "chmod +x start.sh && ./start.sh"
+
+[phases.setup.variables]
+PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1"

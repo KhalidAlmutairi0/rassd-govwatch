@@ -6,6 +6,25 @@ import { analyzePageAndCreatePlan, assessElementResult, generateFinalSummary, Ag
 import { prisma } from "./prisma";
 import { promises as fs } from "fs";
 import path from "path";
+import { execSync } from "child_process";
+
+function findChromiumPath(): string | undefined {
+  if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
+  const candidates = [
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+  ];
+  for (const p of candidates) {
+    try { require("fs").accessSync(p); return p; } catch {}
+  }
+  try {
+    const found = execSync("which chromium || which chromium-browser || which google-chrome 2>/dev/null", { encoding: "utf8" }).trim();
+    if (found) return found;
+  } catch {}
+  return undefined;
+}
 import { getAccessibilityTree, formatAccessibilityTree } from "./accessibility-tree";
 
 function parseSummaryText(raw: string): {
@@ -156,8 +175,11 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
       description: "Opening website..."
     });
 
+    const chromePath = findChromiumPath();
+    if (chromePath) console.log(`[BROWSER] Using Chromium at: ${chromePath}`);
+
     browser = await chromium.launch({
-      executablePath: process.env.CHROME_PATH || undefined,
+      executablePath: chromePath,
       headless: true,
       args: [
         "--headless=new",
