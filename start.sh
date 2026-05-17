@@ -11,6 +11,13 @@ if [ "$SITE_COUNT" = "0" ]; then
   npx tsx prisma/seed.ts
 fi
 
+# One-time migration: replace geo-blocked sites with globally accessible ones
+HAS_OLD=$(node -e "const{PrismaClient}=require('@prisma/client');const p=new PrismaClient();p.site.findFirst({where:{baseUrl:'https://www.absher.sa'}}).then(s=>{console.log(s?'yes':'no');p.\$disconnect()})" 2>/dev/null || echo "no")
+if [ "$HAS_OLD" = "yes" ]; then
+  echo "Migrating sites to globally accessible URLs..."
+  npx tsx prisma/migrate-sites.ts
+fi
+
 echo "Starting worker + WebSocket server (port ${WORKER_PORT:-3003})..."
 npx tsx src/worker/scheduler.ts &
 

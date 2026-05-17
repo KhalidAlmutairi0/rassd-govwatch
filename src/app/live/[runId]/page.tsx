@@ -152,11 +152,11 @@ export default function LiveViewPage() {
 
         // Use totalSteps from run record as the progress denominator
         if (data.totalSteps && data.totalSteps > 0) {
-          setExpectedTotal(data.totalSteps);
+          setExpectedTotal((prev) => prev !== data.totalSteps ? data.totalSteps : prev);
         }
 
         if (data.elements && data.elements.length > 0) {
-          setSteps(data.elements.map((el: any, i: number) => ({
+          const nextSteps: StepStatus[] = data.elements.map((el: any, i: number) => ({
             index: i,
             action: el.action || el.elementType,
             description: el.elementText || `${el.elementType}: ${el.action}`,
@@ -165,7 +165,19 @@ export default function LiveViewPage() {
               : el.status === "pending" ? "running" : el.status,
             durationMs: el.responseTimeMs,
             error: el.error,
-          })));
+          }));
+          setSteps((prev) => {
+            // Skip update when nothing changed (avoids unnecessary re-renders)
+            if (prev.length === nextSteps.length && prev.every((s, i) =>
+              s.status === nextSteps[i].status &&
+              s.action === nextSteps[i].action &&
+              s.durationMs === nextSteps[i].durationMs &&
+              s.error === nextSteps[i].error
+            )) {
+              return prev;
+            }
+            return nextSteps;
+          });
         }
 
         if (data.status && ["passed", "failed", "error"].includes(data.status)) {
