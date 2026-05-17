@@ -11,8 +11,6 @@ services:
         fromDatabase:
           name: govwatch-db
           property: connectionString
-      - key: NEXT_PUBLIC_WS_URL
-        value: wss://rassd-govwatch.onrender.com
       - key: PORT
         value: 3000
       - key: WORKER_PORT

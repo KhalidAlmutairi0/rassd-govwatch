@@ -15,6 +15,7 @@ export async function GET(
       totalSteps: true,
       passedSteps: true,
       failedSteps: true,
+      errorJson: true,
       site: { select: { baseUrl: true, name: true } },
     },
   });

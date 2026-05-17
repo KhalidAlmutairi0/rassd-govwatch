@@ -98,6 +98,7 @@ export default function LiveViewPage() {
   const [currentUrl, setCurrentUrl] = useState<string>("");
   const [cursorState, setCursorState] = useState({ x: 0, y: 0, clicking: false, text: "", type: "" });
   const [expectedTotal, setExpectedTotal] = useState(0);
+  const [errorMessage, setErrorMessage] = useState<string>("");
 
   const wsRef = useRef<WebSocket | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -172,6 +173,14 @@ export default function LiveViewPage() {
           runStatusRef.current = data.status;
           setRunStatus(data.status);
           if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+          if (data.status === "error" && data.errorJson) {
+            try {
+              const err = JSON.parse(data.errorJson);
+              setErrorMessage(err.message || data.errorJson);
+            } catch {
+              setErrorMessage(data.errorJson);
+            }
+          }
         }
       } catch {}
     }, 3000);
@@ -319,10 +328,21 @@ export default function LiveViewPage() {
             style={{ width: `${progressPercent}%` }}
           />
         </div>
-        {isComplete && (
+        {isComplete && runStatus !== "error" && (
           <div className="flex items-center gap-1.5 mt-2">
             <CheckCircle2 className="w-4 h-4 text-emerald-500" />
             <span className="text-sm text-emerald-400 font-medium">Scan complete!</span>
+          </div>
+        )}
+        {runStatus === "error" && (
+          <div className="flex items-start gap-2 mt-2 p-3 rounded-lg bg-red-950/50 border border-red-800">
+            <AlertTriangle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
+            <div>
+              <span className="text-sm text-red-400 font-medium">Scan failed</span>
+              {errorMessage && (
+                <p className="text-xs text-red-300/80 mt-1">{errorMessage}</p>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -465,6 +485,11 @@ export default function LiveViewPage() {
           <div className="flex items-center gap-1.5 text-sm text-[hsl(var(--muted-foreground))]">
             <Clock className="w-4 h-4" />
             Estimated time remaining: ~{Math.max(0, 2 - Math.floor(elapsed / 30))} min
+          </div>
+        ) : runStatus === "error" ? (
+          <div className="flex items-center gap-1.5 text-sm text-red-400">
+            <AlertTriangle className="w-4 h-4" />
+            Scan failed — {errorMessage || "unknown error"}
           </div>
         ) : (
           <div className="flex items-center gap-1.5 text-sm text-emerald-400">
