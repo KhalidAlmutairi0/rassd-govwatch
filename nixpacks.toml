@@ -1,20 +1,39 @@
 [phases.setup]
 nixPkgs = [
   "nodejs_20",
-  "chromium",
   "nss",
   "freetype",
   "harfbuzz",
   "ca-certificates",
   "ttf-dejavu",
+  "glib",
+  "gtk3",
+  "mesa",
+  "xorg.libX11",
+  "xorg.libXcomposite",
+  "xorg.libXdamage",
+  "xorg.libXext",
+  "xorg.libXfixes",
+  "xorg.libXrandr",
+  "xorg.libxcb",
+  "xorg.libxshmfence",
+  "alsa-lib",
+  "at-spi2-atk",
+  "cups",
+  "dbus",
+  "expat",
+  "libdrm",
+  "libxkbcommon",
+  "pango",
+  "nspr",
 ]
 
 [phases.install]
 cmds = [
   "npm ci",
   "npx prisma generate",
-  "npx playwright install --with-deps chromium || true",
-  "echo \"--- Chromium search ---\" && which chromium 2>/dev/null || true && find /nix/store -maxdepth 4 -path '*/bin/chromium' 2>/dev/null | head -3 || true",
+  "npx playwright install chromium",
+  "echo '--- Playwright Chromium path ---' && node -e \"const{chromium}=require('playwright');console.log(chromium.executablePath())\"",
 ]
 
 [phases.build]
