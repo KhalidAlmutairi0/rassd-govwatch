@@ -364,16 +364,44 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
       description: "🧠 AI is analyzing the page and creating a test plan..."
     });
 
-    console.log(`[AI] Sending page data to AI for test plan generation...`);
-    const testPlan = await analyzePageAndCreatePlan(fullScreenshot, htmlStructure, url, metadata, formattedAccessibilityTree);
-    console.log(`[AI] Test plan received: ${testPlan.elements.length} elements`);
+    // Extract real DOM elements as a selector fallback map
+    const realElements = await extractRealPageElements(page, maxElements + 20);
+    console.log(`[DOM] Extracted ${realElements.length} real elements for selector fallback`);
+
+    // AI analyzes page for understanding + real DOM elements for testing
+    console.log(`[AI] Sending page data to AI for page understanding...`);
+    let testPlan: AgentTestPlan;
+    try {
+      const aiPlan = await analyzePageAndCreatePlan(fullScreenshot, htmlStructure, url, metadata, formattedAccessibilityTree);
+      console.log(`[AI] Page understanding: ${aiPlan.pageUnderstanding.siteName} (${aiPlan.elements.length} AI elements)`);
+
+      // Use AI's page understanding but real DOM elements for testing
+      // Real DOM selectors are guaranteed to work — AI selectors often don't match
+      testPlan = {
+        pageUnderstanding: aiPlan.pageUnderstanding,
+        elements: realElements,
+      };
+    } catch (err) {
+      console.log(`[AI] AI analysis failed, using DOM-extracted elements: ${err}`);
+      testPlan = {
+        pageUnderstanding: {
+          siteName: metadata.title,
+          siteNameAr: "",
+          pageType: "homepage",
+          language: metadata.lang || "unknown",
+          description: `Automated test for ${metadata.title}`,
+          descriptionAr: `اختبار آلي لـ ${metadata.title}`,
+        },
+        elements: realElements,
+      };
+    }
 
     // Store AI understanding in database
     await prisma.run.update({
       where: { id: runId },
       data: {
         aiPageUnderstanding: JSON.stringify(testPlan.pageUnderstanding),
-        aiTestPlan: JSON.stringify(testPlan.elements),
+        aiTestPlan: JSON.stringify(testPlan.elements.slice(0, 30)),
       },
     });
 
@@ -381,7 +409,7 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
       type: "analysis",
       phase: "analysis",
       status: "completed",
-      description: `AI identified ${testPlan.elements.length} elements to test`,
+      description: `AI analyzed page, found ${testPlan.elements.length} real elements to test`,
       data: {
         pageUnderstanding: testPlan.pageUnderstanding,
         totalElements: testPlan.elements.length,
@@ -390,8 +418,8 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
     });
 
     // Filter safe elements only + apply max limit
-    const safeElements = testPlan.elements.filter((e) => e.isSafe).slice(0, maxElements);
-    const skippedUnsafe = testPlan.elements.filter((e) => !e.isSafe);
+    const safeElements = realElements.filter((e) => e.isSafe).slice(0, maxElements);
+    const skippedUnsafe = realElements.filter((e) => !e.isSafe);
 
     // Set totalSteps early so live view progress bar has the correct denominator
     await prisma.run.update({
@@ -412,25 +440,36 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
     // ─────────────────────────────────────────
     // PHASE 3: Execute Test Plan Element by Element (DFS)
     // ─────────────────────────────────────────
-    // DFS: after testing homepage elements, explore sub-pages
-    // discovered during navigation and test their elements too
     const visitedPages = new Set<string>();
     visitedPages.add(new URL(url).pathname);
-    const subPageQueue: string[] = []; // pages to explore after homepage
+    const subPageQueue: string[] = [];
     let globalStepNum = 0;
-    const testedElementNames = new Set<string>(); // dedup across pages
+    const testedElementNames = new Set<string>();
+
+    // Sort elements: buttons/tabs/dropdowns first (non-navigating), then nav-links last
+    // This minimizes page navigation during testing
+    const sortOrder: Record<string, number> = {
+      'button': 0, 'tab': 0, 'dropdown': 0, 'menu-item': 0,
+      'search': 1, 'form-input': 1,
+      'nav-link': 2, 'link': 2, 'cta': 2,
+    };
+    const sortedElements = [...safeElements].sort((a, b) => {
+      return (sortOrder[a.type] ?? 1) - (sortOrder[b.type] ?? 1);
+    });
 
     emit({
       type: "testing",
       phase: "testing",
       status: "running",
-      description: `🔍 Testing ${safeElements.length} elements...`
+      description: `🔍 Testing ${sortedElements.length} elements...`
     });
 
-    for (let i = 0; i < safeElements.length; i++) {
-      const testAction = safeElements[i];
+    let needsHomepageReload = false;
 
-      // Skip external links that can't work in headless browser
+    for (let i = 0; i < sortedElements.length; i++) {
+      const testAction = sortedElements[i];
+
+      // Skip external links
       const elLower = testAction.element.toLowerCase();
       const selLower = (testAction.selector || "").toLowerCase();
       if (
@@ -448,30 +487,63 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
       testedElementNames.add(testAction.element.toLowerCase().trim());
       const stepNum = globalStepNum++;
 
-      // Emit: starting this element
       emit({
         type: "testing",
         phase: "testing",
         status: "running",
         description: `Testing: ${testAction.element}`,
         currentStep: stepNum,
-        totalSteps: safeElements.length + subPageQueue.length,
+        totalSteps: sortedElements.length + subPageQueue.length,
         elementType: testAction.type,
         parentSection: testAction.section,
       });
 
       try {
-        // Navigate back to original URL if we're on a different page
-        if (page.url() !== url) {
+        // Only navigate back to homepage if previous test navigated away
+        if (needsHomepageReload) {
           await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15000 });
-          await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
-          await page.waitForTimeout(500);
+          await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+          await page.waitForTimeout(1500);
+          // Dismiss popups
+          try {
+            for (const sel of [
+              'button:has-text("Accept")', 'button:has-text("OK")',
+              'button:has-text("قبول")', 'button:has-text("موافق")',
+              'button:has-text("Close")', 'button:has-text("إغلاق")',
+              '[class*="cookie"] button', '[id*="cookie"] button',
+              'button[aria-label="Close"]', '[role="dialog"] button',
+            ]) {
+              const btn = await page.$(sel);
+              if (btn && await btn.isVisible()) { await btn.click({ timeout: 2000 }); await page.waitForTimeout(500); break; }
+            }
+          } catch {}
+          needsHomepageReload = false;
         }
 
-        // Find the element
-        const element = await findElement(page, testAction);
+        // Try to find element on current page first
+        let element = await findElement(page, testAction);
+
+        // If not found and we're not on homepage, go back and retry
+        if (!element && page.url() !== url) {
+          await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15000 });
+          await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+          await page.waitForTimeout(1500);
+          element = await findElement(page, testAction);
+          needsHomepageReload = false;
+        }
 
         if (!element) {
+          // Scroll down a bit so live view shows movement even when elements aren't found
+          await page.evaluate((step) => window.scrollBy(0, 200 + step * 100), stepNum).catch(() => {});
+          await page.waitForTimeout(300);
+
+          let notFoundPath = "";
+          try {
+            notFoundPath = path.join(artifactsDir, `element-${stepNum}-after.png`);
+            const shot = await page.screenshot({ timeout: 3000 });
+            await fs.writeFile(notFoundPath, shot);
+          } catch { notFoundPath = ""; }
+
           const result: AgentStepResult = {
             testAction,
             status: "warning",
@@ -479,7 +551,7 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
             aiAssessment: "Could not locate this element. It may be hidden, dynamically loaded, or the selector may be incorrect.",
             responseTimeMs: 0,
             screenshotBefore: "",
-            screenshotAfter: "",
+            screenshotAfter: notFoundPath,
             urlChanged: false,
             urlBefore: url,
             urlAfter: url,
@@ -500,6 +572,7 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
               status: "warning",
               responseTimeMs: 0,
               error: `Selector not found or element not interactable. ${result.actualBehavior || ''} ${result.aiAssessment || ''}`.trim(),
+              screenshotAfter: notFoundPath || undefined,
             },
           });
 
@@ -517,7 +590,10 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
           continue;
         }
 
-        // Get bounding box for cursor overlay (no scrolling — avoids "zoom" effect in live view)
+        // Scroll element into view so screenshot shows it
+        await element.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+        await page.waitForTimeout(200);
+
         const box = await element.boundingBox();
         const cursorX = box ? jitter(Math.round(box.x + box.width / 2)) : 0;
         const cursorY = box ? jitter(Math.round(box.y + box.height / 2)) : 0;
@@ -584,6 +660,8 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
 
         // Human-like pause after action
         await page.waitForTimeout(300 + Math.round(Math.random() * 150));
+
+
 
         // Screenshot AFTER — wrapped in try/catch in case page navigated away
         let afterScreenshot: Buffer = beforeScreenshot;
@@ -681,13 +759,14 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
 
         // DFS: if the click navigated to a new same-domain page, queue it
         if (urlBefore !== urlAfter) {
+          needsHomepageReload = true;
           try {
             const baseHost = new URL(url).hostname;
             const afterUrl = new URL(urlAfter);
             if (
               (afterUrl.hostname === baseHost || afterUrl.hostname.endsWith("." + baseHost)) &&
               !visitedPages.has(afterUrl.pathname) &&
-              subPageQueue.length < 5 // limit depth to 5 sub-pages
+              subPageQueue.length < 5
             ) {
               visitedPages.add(afterUrl.pathname);
               subPageQueue.push(urlAfter);
@@ -719,6 +798,19 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
           ? `Element triggered a page transition (${errorMsg.slice(0, 80)})`
           : `Element interaction failed: ${errorMsg}`;
 
+        // Capture screenshot even on failure so live view has something to show
+        let failAfterPath = "";
+        let failCursorX = 0;
+        let failCursorY = 0;
+        try {
+          failAfterPath = path.join(artifactsDir, `element-${stepNum}-after.png`);
+          const failShot = await page.screenshot({ timeout: 3000 });
+          await fs.writeFile(failAfterPath, failShot);
+          // element is out of scope in catch — use page center as fallback cursor
+          failCursorX = 640;
+          failCursorY = 360;
+        } catch { failAfterPath = ""; }
+
         const failureResult: AgentStepResult = {
           testAction,
           status,
@@ -726,7 +818,7 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
           aiAssessment: assessment,
           responseTimeMs: timeoutPerElement,
           screenshotBefore: "",
-          screenshotAfter: "",
+          screenshotAfter: failAfterPath,
           urlChanged: false,
           urlBefore: url,
           urlAfter: url,
@@ -748,6 +840,9 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
             responseTimeMs: timeoutPerElement,
             error: assessment,
             consoleErrors: JSON.stringify(isBenign ? [] : [errorMsg]),
+            screenshotAfter: failAfterPath || undefined,
+            cursorX: failCursorX || undefined,
+            cursorY: failCursorY || undefined,
           },
         });
 
@@ -804,57 +899,11 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
           }
         } catch {}
 
-        // Take screenshot of sub-page
-        const subScreenshot = await page.screenshot({ fullPage: true });
+        // Extract real DOM elements directly from sub-page
+        const subRealElements = await extractRealPageElements(page, 30);
+        console.log(`[DOM] Sub-page ${new URL(subPageUrl).pathname}: ${subRealElements.length} real elements`);
 
-        // Extract interactive elements on this sub-page
-        const subHtmlStructure = await page.evaluate(() => {
-          const selectors = [
-            "nav a[href]", "header a[href]", "header button",
-            "a[href]", "button", "[role='button']", "input", "select",
-            "[role='tab']", "[role='menuitem']",
-          ];
-          const elements: string[] = [];
-          const seen = new Set<Element>();
-          for (const sel of selectors) {
-            document.querySelectorAll(sel).forEach((el) => {
-              if (seen.has(el)) return;
-              seen.add(el);
-              const tag = el.tagName.toLowerCase();
-              const text = (el.textContent || "").trim().slice(0, 80);
-              const href = el.getAttribute("href") || "";
-              const role = el.getAttribute("role") || "";
-              const className = (el.className || "").toString().slice(0, 100);
-              const id = el.getAttribute("id") || "";
-              const ariaLabel = el.getAttribute("aria-label") || "";
-              const rect = el.getBoundingClientRect();
-              if (rect.width === 0 || rect.height === 0) return;
-              const style = window.getComputedStyle(el);
-              if (style.display === "none" || style.visibility === "hidden") return;
-              const attrs = [
-                id ? `id="${id}"` : "", className ? `class="${className}"` : "",
-                href ? `href="${href}"` : "", role ? `role="${role}"` : "",
-                ariaLabel ? `aria-label="${ariaLabel}"` : "",
-              ].filter(Boolean).join(" ");
-              if (elements.length < 50) elements.push(`<${tag} ${attrs}>${text}</${tag}>`);
-            });
-          }
-          return elements.join("\n");
-        });
-
-        const subMetadata = await page.evaluate(() => ({
-          title: document.title,
-          description: document.querySelector('meta[name="description"]')?.getAttribute("content") || undefined,
-          lang: document.documentElement.lang || undefined,
-        }));
-
-        // Get accessibility tree for sub-page
-        const subAccessTree = await getAccessibilityTree(page);
-        const subFormattedTree = formatAccessibilityTree(subAccessTree);
-
-        // AI analyzes the sub-page
-        const subPlan = await analyzePageAndCreatePlan(subScreenshot, subHtmlStructure, subPageUrl, subMetadata, subFormattedTree);
-        const subElements = subPlan.elements.filter((e) => {
+        const subElements = subRealElements.filter((e) => {
           if (!e.isSafe) return false;
           // Skip already-tested elements (footer/nav duplicates)
           const name = e.element.toLowerCase().trim();
@@ -910,10 +959,15 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
 
             const element = await findElement(page, testAction);
             if (!element) {
+              let nfPath = "";
+              try {
+                nfPath = path.join(artifactsDir, `element-${stepNum}-after.png`);
+                await fs.writeFile(nfPath, await page.screenshot({ timeout: 3000 }));
+              } catch { nfPath = ""; }
               results.push({
                 testAction, status: "warning", actualBehavior: "Element not found on sub-page",
                 aiAssessment: "Could not locate element on sub-page.",
-                responseTimeMs: 0, screenshotBefore: "", screenshotAfter: "",
+                responseTimeMs: 0, screenshotBefore: "", screenshotAfter: nfPath,
                 urlChanged: false, urlBefore: subPageUrl, urlAfter: subPageUrl,
                 consoleErrors: [], networkErrors: [],
               });
@@ -923,6 +977,7 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
                   elementSelector: testAction.selector, parentSection: testAction.section,
                   action: testAction.action, status: "warning", responseTimeMs: 0,
                   error: "Selector not found on sub-page",
+                  screenshotAfter: nfPath || undefined,
                 },
               });
               emit({
@@ -933,6 +988,9 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
               });
               continue;
             }
+
+            await element.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+            await page.waitForTimeout(200);
 
             const box = await element.boundingBox();
             const cx = box ? jitter(Math.round(box.x + box.width / 2)) : 0;
@@ -1001,10 +1059,15 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
 
           } catch (error: any) {
             const errMsg = error.message || "";
+            let subFailPath = "";
+            try {
+              subFailPath = path.join(artifactsDir, `element-${stepNum}-after.png`);
+              await fs.writeFile(subFailPath, await page.screenshot({ timeout: 3000 }));
+            } catch { subFailPath = ""; }
             results.push({
               testAction, status: "warning", actualBehavior: errMsg,
               aiAssessment: errMsg, responseTimeMs: 0,
-              screenshotBefore: "", screenshotAfter: "",
+              screenshotBefore: "", screenshotAfter: subFailPath,
               urlChanged: false, urlBefore: subPageUrl, urlAfter: subPageUrl,
               consoleErrors: [], networkErrors: [],
             });
@@ -1014,6 +1077,7 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
                 elementSelector: testAction.selector, parentSection: testAction.section || "",
                 action: testAction.action, status: "warning", responseTimeMs: 0,
                 error: errMsg.slice(0, 500),
+                screenshotAfter: subFailPath || undefined,
               },
             });
             emit({
@@ -1103,27 +1167,196 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
 }
 
 // ─────────────────────────────────────────
-// Helper: Find element using AI's selector
+// Extract REAL elements from live DOM
+// ─────────────────────────────────────────
+async function extractRealPageElements(page: Page, maxElements: number): Promise<AgentTestAction[]> {
+  const rawElements = await page.evaluate((max) => {
+    const results: any[] = [];
+    const seen = new Set<string>();
+    const unsafePattern = /login|logout|sign.?in|sign.?out|register|تسجيل|دخول|خروج|delete|حذف|submit|إرسال|payment|دفع|download|تحميل|nafath|نفاذ|password|كلمة.?مرور|username|اسم.?المستخدم|رقم.?الهوية|مستخدم.?جديد/i;
+    const externalPattern = /twitter|facebook|instagram|linkedin|youtube|snapchat|tiktok|whatsapp|play\.google|apps\.apple|mailto:|tel:|javascript:/i;
+
+    const allInteractive = document.querySelectorAll(
+      'a[href], button, input, select, textarea, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [onclick]'
+    );
+
+    for (let i = 0; i < allInteractive.length; i++) {
+      const el = allInteractive[i];
+      if (results.length >= max) break;
+      const htmlEl = el as HTMLElement;
+      const rect = htmlEl.getBoundingClientRect();
+
+      // Skip invisible/tiny elements
+      if (rect.width < 10 || rect.height < 10) continue;
+      // Skip elements completely offscreen
+      if (rect.bottom < 0 || rect.top > document.documentElement.scrollHeight + 100) continue;
+      const style = window.getComputedStyle(htmlEl);
+      if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') continue;
+      // Skip elements with no pointer events (likely decorative overlays)
+      if (style.pointerEvents === 'none') continue;
+
+      const tag = htmlEl.tagName.toLowerCase();
+      const text = (htmlEl.textContent || '').trim().replace(/\s+/g, ' ').substring(0, 80);
+      const href = htmlEl.getAttribute('href') || '';
+      const id = htmlEl.getAttribute('id') || '';
+      const ariaLabel = htmlEl.getAttribute('aria-label') || '';
+      const name = htmlEl.getAttribute('name') || '';
+      const typeAttr = htmlEl.getAttribute('type') || '';
+      const placeholder = (htmlEl as HTMLInputElement).placeholder || '';
+      const role = htmlEl.getAttribute('role') || '';
+
+      // Skip external links
+      if (externalPattern.test(href) || externalPattern.test(text)) continue;
+      // Skip anchor-only links
+      if (tag === 'a' && (!href || href === '#' || href.startsWith('javascript:'))) continue;
+
+      // Build display name
+      const displayText = text.substring(0, 60) || ariaLabel || placeholder || name || '';
+
+      // Skip elements with no meaningful text (icon-only buttons, image links)
+      if (!displayText || displayText.length < 2) continue;
+
+      // Skip elements inside hidden dropdowns/menus (parent has overflow:hidden or max-height:0)
+      let parentHidden = false;
+      let parent = htmlEl.parentElement;
+      for (let depth = 0; depth < 5 && parent; depth++) {
+        const ps = window.getComputedStyle(parent);
+        if (ps.overflow === 'hidden' && parent.clientHeight < 5) { parentHidden = true; break; }
+        if (ps.maxHeight === '0px' || ps.maxHeight === '0') { parentHidden = true; break; }
+        parent = parent.parentElement;
+      }
+      if (parentHidden) continue;
+
+      // Build unique key for dedup
+      const key = tag + '|' + displayText.substring(0, 30) + '|' + href.substring(0, 50);
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      // Build a selector that WORKS — using data attributes, id, href, or nth-of-type
+      let selector = '';
+      if (id) {
+        selector = '#' + CSS.escape(id);
+      } else if (tag === 'a' && href && href.length < 200) {
+        selector = `a[href="${href.replace(/"/g, '\\"')}"]`;
+      } else if (ariaLabel) {
+        selector = `[aria-label="${ariaLabel.replace(/"/g, '\\"')}"]`;
+      } else if (name && (tag === 'input' || tag === 'select' || tag === 'textarea')) {
+        selector = `${tag}[name="${name.replace(/"/g, '\\"')}"]`;
+      } else if (typeAttr && tag === 'input') {
+        selector = `input[type="${typeAttr}"]`;
+      } else {
+        // Use nth-of-type as last resort
+        const parent = htmlEl.parentElement;
+        if (parent) {
+          const siblings = Array.from(parent.querySelectorAll(':scope > ' + tag));
+          const idx = siblings.indexOf(htmlEl);
+          if (idx >= 0) {
+            const parentId = parent.getAttribute('id');
+            const parentClass = parent.className ? '.' + parent.className.split(/\s+/).filter(c => c.length > 0).slice(0, 2).join('.') : '';
+            const parentSel = parentId ? '#' + CSS.escape(parentId) : (parent.tagName.toLowerCase() + parentClass);
+            selector = `${parentSel} > ${tag}:nth-of-type(${idx + 1})`;
+          }
+        }
+      }
+
+      if (!selector) continue;
+
+      // Safety check
+      const isSafe = !unsafePattern.test(displayText + ' ' + href);
+
+      // Determine section from position
+      let section = 'content';
+      if (rect.y < 120) section = 'header';
+      else if (rect.y > document.body.scrollHeight - 300) section = 'footer';
+      const closestNav = htmlEl.closest('nav, [role="navigation"], header');
+      if (closestNav) section = 'nav';
+
+      results.push({
+        tag, text: displayText, selector, href, typeAttr, name, ariaLabel, placeholder,
+        isSafe, section, role,
+        x: Math.round(rect.x), y: Math.round(rect.y),
+        w: Math.round(rect.width), h: Math.round(rect.height),
+      });
+    }
+
+    return results;
+  }, maxElements);
+
+  // Convert to AgentTestAction format
+  let id = 1;
+  return rawElements.map((el: any) => {
+    let type = 'button';
+    let action: string = 'click';
+    let priority: 'high' | 'medium' | 'low' = 'medium';
+
+    if (el.tag === 'a') {
+      type = 'nav-link'; action = 'click';
+      priority = el.section === 'nav' || el.section === 'header' ? 'high' : 'medium';
+    } else if (el.tag === 'button' || el.role === 'button') {
+      type = 'button'; action = 'click'; priority = 'high';
+    } else if (el.tag === 'input' || el.tag === 'textarea') {
+      if (el.typeAttr === 'search' || el.name?.includes('search') || el.placeholder?.includes('بحث') || el.placeholder?.toLowerCase().includes('search')) {
+        type = 'search'; action = 'type'; priority = 'high';
+      } else {
+        type = 'form-input'; action = 'type'; priority = 'medium';
+      }
+    } else if (el.tag === 'select') {
+      type = 'dropdown'; action = 'select'; priority = 'medium';
+    } else if (el.role === 'tab') {
+      type = 'tab'; action = 'click'; priority = 'high';
+    } else if (el.role === 'menuitem') {
+      type = 'menu-item'; action = 'click'; priority = 'medium';
+    }
+
+    if (el.section === 'footer') priority = 'low';
+
+    return {
+      id: id++,
+      element: el.text,
+      selector: el.selector,
+      type,
+      action,
+      reason: `Real DOM element: ${type}`,
+      priority,
+      expectedBehavior: action === 'click' ? 'Should respond to interaction' : 'Should accept input',
+      isSafe: el.isSafe,
+      section: el.section,
+    } as AgentTestAction;
+  });
+}
+
+// ─────────────────────────────────────────
+// Helper: Find element using selector
 // ─────────────────────────────────────────
 async function findElement(page: Page, testAction: AgentTestAction) {
-  // Try the AI's suggested selector first
+  // 0. Try real DOM selector (extracted from live page, guaranteed to work)
+  const domSelector = (testAction as any)._domSelector;
+  if (domSelector) {
+    try {
+      const el = await page.locator(domSelector).first();
+      if (await el.isVisible({ timeout: 2000 })) return el;
+    } catch {}
+  }
+
+  // 1. Try the AI's suggested selector
   try {
     const el = await page.locator(testAction.selector).first();
     if (await el.isVisible({ timeout: 2000 })) return el;
   } catch {}
 
-  // Fallback: try finding by text content
+  // 2. Try finding by exact text content
   try {
     const textToFind = testAction.element
-      .replace(/^(Navigation link|Button|Tab|Link|Dropdown|Menu item)\s*['"]?/i, "")
-      .replace(/['"]?\s*$/, "");
-    if (textToFind && textToFind.length > 2) {
+      .replace(/^(Navigation link|Button|Tab|Link|Dropdown|Menu item|Search|Form|Input)\s*['"]?/i, "")
+      .replace(/['"]?\s*$/, "")
+      .trim();
+    if (textToFind && textToFind.length > 1) {
       const el = page.getByText(textToFind, { exact: false }).first();
       if (await el.isVisible({ timeout: 2000 })) return el;
     }
   } catch {}
 
-  // Fallback: try role + name
+  // 3. Try role + name
   try {
     const roleMap: Record<string, string> = {
       "button": "button",
@@ -1131,6 +1364,7 @@ async function findElement(page: Page, testAction: AgentTestAction) {
       "link": "link",
       "tab": "tab",
       "menu-item": "menuitem",
+      "form-input": "textbox",
     };
     const role = roleMap[testAction.type];
     if (role) {
@@ -1138,6 +1372,60 @@ async function findElement(page: Page, testAction: AgentTestAction) {
         name: new RegExp(testAction.element.slice(0, 30), "i")
       }).first();
       if (await el.isVisible({ timeout: 2000 })) return el;
+    }
+  } catch {}
+
+  // 4. Try extracting href pattern from selector and matching loosely
+  try {
+    const hrefMatch = testAction.selector.match(/href[*~^$]?=['"]([^'"]+)['"]/);
+    if (hrefMatch) {
+      const hrefPart = hrefMatch[1].split("/").pop() || hrefMatch[1];
+      const el = page.locator(`a[href*="${hrefPart}"]`).first();
+      if (await el.isVisible({ timeout: 2000 })) return el;
+    }
+  } catch {}
+
+  // 5. Try simplified selector (just tag + class)
+  try {
+    const classMatch = testAction.selector.match(/([a-z]+)\.([a-z0-9_-]+)/i);
+    if (classMatch) {
+      const el = page.locator(`${classMatch[1]}.${classMatch[2]}`).first();
+      if (await el.isVisible({ timeout: 2000 })) return el;
+    }
+  } catch {}
+
+  // 6. Try aria-label matching
+  try {
+    const name = testAction.element.replace(/^(Navigation link|Button|Tab|Link)\s*/i, "").trim();
+    if (name.length > 1) {
+      const el = page.locator(`[aria-label*="${name}" i]`).first();
+      if (await el.isVisible({ timeout: 1500 })) return el;
+    }
+  } catch {}
+
+  // 7. Generic: find any visible link/button containing the key word
+  try {
+    const words = testAction.element.split(/\s+/).filter(w => w.length > 3);
+    for (const word of words) {
+      const el = page.locator(`a:visible, button:visible`).filter({ hasText: new RegExp(word, "i") }).first();
+      if (await el.isVisible({ timeout: 1000 })) return el;
+    }
+  } catch {}
+
+  // 8. Last resort: scroll down and try selector again (element might be below fold)
+  try {
+    await page.evaluate(() => window.scrollBy(0, 400));
+    await page.waitForTimeout(300);
+    const el = await page.locator(testAction.selector).first();
+    if (await el.isVisible({ timeout: 1500 })) return el;
+  } catch {}
+
+  // 9. Try text search after scroll
+  try {
+    const text = testAction.element.replace(/^(a|button|input)\s+element$/i, '').trim();
+    if (text && text.length > 1) {
+      const el = page.getByText(text, { exact: true }).first();
+      if (await el.isVisible({ timeout: 1000 })) return el;
     }
   } catch {}
 

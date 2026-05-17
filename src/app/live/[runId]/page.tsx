@@ -92,6 +92,7 @@ export default function LiveViewPage() {
   const imgBufferRef = useRef<HTMLImageElement | null>(null);
   const [hasFrame, setHasFrame] = useState(false);
   const [latestFrame, setLatestFrame] = useState<string | null>(null);
+  const [polledScreenshot, setPolledScreenshot] = useState<string | null>(null);
   const [steps, setSteps] = useState<StepStatus[]>([]);
   const [runStatus, setRunStatus] = useState<string>("connecting");
   const [elapsed, setElapsed] = useState(0);
@@ -104,10 +105,12 @@ export default function LiveViewPage() {
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const timerStartRef = useRef<number | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
+  const activityEndRef = useRef<HTMLDivElement | null>(null);
   const startedRef = useRef<boolean>(false);
   const cleanupRef = useRef<boolean>(false);
   const runStatusRef = useRef<string>("connecting");
   const retryCountRef = useRef<number>(0);
+  const lastScreenshotPathRef = useRef<string | null>(null);
 
   const startTimer = () => {
     if (timerStartRef.current !== null) return;
@@ -116,6 +119,11 @@ export default function LiveViewPage() {
       setElapsed(Math.floor((Date.now() - timerStartRef.current!) / 1000));
     }, 1000);
   };
+
+  // Auto-scroll activity list to bottom when new items appear
+  useEffect(() => {
+    activityEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [steps]);
 
   useEffect(() => {
     if (wsRef.current && wsRef.current.readyState !== WebSocket.CLOSED) {
@@ -180,6 +188,38 @@ export default function LiveViewPage() {
           });
         }
 
+        // Display latest viewport screenshot — only re-download when path changes
+        if (data.latestScreenshot && data.latestScreenshot !== lastScreenshotPathRef.current) {
+          lastScreenshotPathRef.current = data.latestScreenshot;
+          setPolledScreenshot(data.latestScreenshot + "?t=" + Date.now());
+        }
+        // Update cursor position — account for object-contain letterbox offset
+        if (data.cursorX != null && data.cursorY != null && frameRef.current) {
+          const rect = frameRef.current.getBoundingClientRect();
+          const lastEl = data.elements?.[data.elements.length - 1];
+          const imgAspect = 1280 / 720;
+          const boxAspect = rect.width / rect.height;
+          let renderedW: number, renderedH: number, offsetX: number, offsetY: number;
+          if (boxAspect > imgAspect) {
+            renderedH = rect.height;
+            renderedW = rect.height * imgAspect;
+            offsetX = (rect.width - renderedW) / 2;
+            offsetY = 0;
+          } else {
+            renderedW = rect.width;
+            renderedH = rect.width / imgAspect;
+            offsetX = 0;
+            offsetY = (rect.height - renderedH) / 2;
+          }
+          setCursorState({
+            x: offsetX + (data.cursorX / 1280) * renderedW,
+            y: offsetY + (data.cursorY / 720) * renderedH,
+            clicking: false,
+            text: lastEl?.elementText || "",
+            type: lastEl?.elementType || "",
+          });
+        }
+
         if (data.status && ["passed", "failed", "error"].includes(data.status)) {
           clearInterval(pollInterval);
           runStatusRef.current = data.status;
@@ -195,14 +235,13 @@ export default function LiveViewPage() {
           }
         }
       } catch {}
-    }, 3000);
+    }, 1500);
 
     // ── 3. Connect WebSocket for live frames (best-effort, not required) ──
-    const wsUrl =
-      process.env.NEXT_PUBLIC_WS_URL ||
-      (typeof window !== "undefined"
-        ? `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`
-        : "ws://localhost:3003");
+    // Always derive WS URL from current page location (same host, same port)
+    const wsProto = window.location.protocol === "https:" ? "wss" : "ws";
+    const wsUrl = `${wsProto}://${window.location.host}`;
+    console.log(`[WS] Connecting to ${wsUrl}/live/${runId}`);
     const ws = new WebSocket(`${wsUrl}/live/${runId}`);
     wsRef.current = ws;
 
@@ -233,9 +272,19 @@ export default function LiveViewPage() {
         case "cursor_move":
           if (frameRef.current) {
             const rect = frameRef.current.getBoundingClientRect();
+            const imgA = 1280 / 720;
+            const boxA = rect.width / rect.height;
+            let rW: number, rH: number, oX: number, oY: number;
+            if (boxA > imgA) {
+              rH = rect.height; rW = rect.height * imgA;
+              oX = (rect.width - rW) / 2; oY = 0;
+            } else {
+              rW = rect.width; rH = rect.width / imgA;
+              oX = 0; oY = (rect.height - rH) / 2;
+            }
             setCursorState({
-              x: data.data.x * (rect.width / 1280),
-              y: data.data.y * (rect.height / 720),
+              x: oX + (data.data.x / 1280) * rW,
+              y: oY + (data.data.y / 720) * rH,
               clicking: false,
               text: data.data.elementText,
               type: data.data.elementType,
@@ -311,7 +360,7 @@ export default function LiveViewPage() {
   };
 
   return (
-    <div className="flex flex-col min-h-full p-5 gap-4">
+    <div className="flex flex-col h-full p-5 gap-4 overflow-hidden">
       {/* Header row */}
       <div className="flex items-center justify-between">
         <div>
@@ -334,8 +383,7 @@ export default function LiveViewPage() {
         <div className="h-1.5 bg-[hsl(var(--border))] rounded-full overflow-hidden">
           <div
             className={`h-full rounded-full transition-all duration-700 ${
-              isComplete && runStatus !== "failed" ? "bg-emerald-500" :
-              runStatus === "failed" ? "bg-red-500" : "bg-emerald-500"
+              runStatus === "error" ? "bg-red-500" : "bg-emerald-500"
             }`}
             style={{ width: `${progressPercent}%` }}
           />
@@ -384,15 +432,15 @@ export default function LiveViewPage() {
       </div>
 
       {/* Main content: Agent Activity + Latest Screenshot */}
-      <div className="flex gap-4 flex-1 min-h-0" style={{ minHeight: "520px" }}>
+      <div className="flex gap-4 flex-1 min-h-0 overflow-hidden">
 
-        {/* Left: Agent Activity */}
-        <div className="w-72 shrink-0 bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-xl flex flex-col overflow-hidden">
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-[hsl(var(--border))]">
+        {/* Left: Agent Activity — fixed size, scrollable */}
+        <div className="w-72 h-[710px] shrink-0 bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-xl flex flex-col overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-3 border-b border-[hsl(var(--border))] shrink-0">
             <Clock className="w-4 h-4 text-[hsl(var(--muted-foreground))]" />
             <span className="text-sm font-medium text-white">Agent Activity</span>
           </div>
-          <div className="flex-1 overflow-y-auto p-2">
+          <div className="flex-1 min-h-0 overflow-y-auto p-2">
             {activityItems.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-[hsl(var(--muted-foreground))]">
                 <div className="w-6 h-6 border-2 border-current border-t-transparent rounded-full animate-spin mb-2" />
@@ -430,39 +478,51 @@ export default function LiveViewPage() {
                     </span>
                   </li>
                 ))}
+                <div ref={activityEndRef} />
               </ul>
             )}
           </div>
         </div>
 
-        {/* Right: Latest Screenshot — flex-1 so it fills remaining space */}
-        <div className="flex-1 bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-xl flex flex-col overflow-hidden">
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-[hsl(var(--border))]">
+        {/* Right: Latest Screenshot — flex-1, constrained to box */}
+        <div className="flex-1 min-w-0 bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-xl flex flex-col overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-3 border-b border-[hsl(var(--border))] shrink-0">
             <Monitor className="w-4 h-4 text-[hsl(var(--muted-foreground))]" />
             <span className="text-sm font-medium text-white">Latest Screenshot</span>
           </div>
 
-          {/* Browser canvas — always mounted so canvasRef is valid on first frame */}
-          <div ref={frameRef} className="flex-1 relative bg-[hsl(var(--background))] overflow-hidden" style={{ minHeight: 200 }}>
-            {/* Placeholder shown until first frame arrives */}
-            {!hasFrame && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-[hsl(var(--muted-foreground))] z-10">
+          {/* Browser view — fills the entire box */}
+          <div ref={frameRef} className="flex-1 relative bg-black overflow-hidden min-h-0">
+            {/* Placeholder */}
+            {!polledScreenshot && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-[hsl(var(--muted-foreground))]">
                 <Monitor className="w-10 h-10 opacity-30" />
-                <p className="text-xs">Live screenshot preview</p>
+                <p className="text-xs">
+                  {runStatus === "running" ? "Waiting for first screenshot..." : runStatus === "connecting" ? "Starting scan..." : "Live screenshot preview"}
+                </p>
               </div>
             )}
 
-            {/* Canvas always in DOM so ref is always available */}
+            {/* Polled screenshot — contained inside the box, no cropping */}
+            {polledScreenshot && (
+              <img
+                src={polledScreenshot}
+                alt="Agent browser view"
+                className="absolute inset-0 w-full h-full object-contain"
+              />
+            )}
+
+            {/* Canvas for CDP WebSocket frames */}
             <canvas
               ref={canvasRef}
               width={1280}
               height={720}
-              className="w-full h-full object-cover"
+              className="absolute inset-0 w-full h-full object-contain"
               style={{ display: hasFrame ? "block" : "none" }}
             />
 
-            {/* Overlays on top of canvas */}
-            {hasFrame && (cursorState.x > 0 || cursorState.y > 0) && runStatus === "running" && (
+            {/* Cursor overlay */}
+            {polledScreenshot && (cursorState.x > 0 || cursorState.y > 0) && runStatus === "running" && (
               <AnimatedCursor
                 targetX={cursorState.x}
                 targetY={cursorState.y}
@@ -471,8 +531,9 @@ export default function LiveViewPage() {
                 elementType={cursorState.type}
               />
             )}
-            {hasFrame && runStatus === "running" && (
-              <div className="absolute top-2 left-2 flex items-center gap-1.5 bg-black/70 backdrop-blur-sm rounded-full px-2 py-1 z-10">
+            {/* LIVE badge */}
+            {runStatus === "running" && (
+              <div className="absolute top-2 left-2 flex items-center gap-1.5 bg-black/70 backdrop-blur-sm rounded-full px-2 py-1 z-20">
                 <span className="w-1.5 h-1.5 bg-red-500 rounded-full live-dot" />
                 <span className="text-[10px] text-white font-medium">LIVE</span>
               </div>
@@ -481,7 +542,7 @@ export default function LiveViewPage() {
 
           {/* URL below screenshot */}
           {currentUrl && (
-            <div className="px-3 py-2 border-t border-[hsl(var(--border))]">
+            <div className="px-3 py-2 border-t border-[hsl(var(--border))] shrink-0">
               <p className="text-xs font-medium text-white truncate">
                 {new URL(currentUrl).pathname || "Homepage"}
               </p>

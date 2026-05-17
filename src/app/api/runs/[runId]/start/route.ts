@@ -8,34 +8,32 @@ import { processRunResult } from "@/lib/incidents";
 import { storeSiteScore } from "@/lib/scoring";
 import path from "path";
 
-let _frameCount = 0;
+function createRelay(runId: string): { send: (msg: object) => void; close: () => void } {
+  const port = parseInt(process.env.PORT || "3000", 10);
+  const url = `http://localhost:${port}/relay-push/${runId}`;
+  let frameCount = 0;
 
-function broadcastToLive(runId: string, message: object) {
-  const sessions = (globalThis as any).__liveSessions as
-    | Map<string, { runId: string; clients: Set<any> }>
-    | undefined;
-  if (!sessions) {
-    if (_frameCount === 0) console.log(`[BROADCAST] WARNING: __liveSessions not found on globalThis`);
-    return;
-  }
-  const session = sessions.get(runId);
-  if (!session) {
-    if (_frameCount === 0) console.log(`[BROADCAST] WARNING: no session for runId=${runId}, available sessions: [${[...sessions.keys()].join(", ")}]`);
-    return;
-  }
-  const msgType = (message as any).type;
-  if (msgType === "browser-frame") {
-    _frameCount++;
-    if (_frameCount === 1 || _frameCount % 50 === 0) {
-      console.log(`[BROADCAST] Sending frame #${_frameCount} to ${session.clients.size} client(s) for run ${runId}`);
-    }
-  } else {
-    console.log(`[BROADCAST] Sending ${msgType} to ${session.clients.size} client(s) for run ${runId}`);
-  }
-  const data = JSON.stringify(message);
-  for (const client of session.clients) {
-    if (client.readyState === 1) client.send(data);
-  }
+  return {
+    send(msg: object) {
+      const body = JSON.stringify(msg);
+      if ((msg as any).type === "browser-frame") {
+        frameCount++;
+        if (frameCount <= 3 || frameCount % 30 === 0) {
+          console.log(`[RELAY] Frame #${frameCount} sent for run ${runId}`);
+        }
+      }
+      fetch(url, {
+        method: "POST",
+        body,
+        headers: { "Content-Type": "application/json" },
+      }).catch((err) => {
+        console.error(`[RELAY] HTTP push failed: ${err.message}`);
+      });
+    },
+    close() {
+      console.log(`[RELAY] Closed for run ${runId} (${frameCount} frames sent)`);
+    },
+  };
 }
 
 export async function POST(
@@ -91,7 +89,8 @@ async function executeScan(run: any) {
   const { id: runId, site, journey } = run;
   const artifactsDir = path.join(process.cwd(), "artifacts", site.id, runId);
 
-  const send = (msg: object) => broadcastToLive(runId, msg);
+  const relay = createRelay(runId);
+  const send = (msg: object) => relay.send(msg);
 
   console.log(`[SCAN] Starting AI test for ${site.name} (run ${runId})`);
   send({ type: "run-status", status: "running" });
@@ -168,5 +167,7 @@ async function executeScan(run: any) {
     });
     send({ type: "run-complete", status: "error" });
     console.error(`[SCAN] ${site.name}: ${error.message}`);
+  } finally {
+    relay.close();
   }
 }

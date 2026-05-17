@@ -26,8 +26,8 @@ async function cleanupStuckRuns() {
     const r = await prisma.run.updateMany({
       where: {
         OR: [
-          { status: "running", startedAt: { lt: new Date(Date.now() - 3 * 60 * 1000) } },
-          { status: "queued", startedAt: { lt: new Date(Date.now() - 5 * 60 * 1000) } },
+          { status: "running", startedAt: { lt: new Date(Date.now() - 30 * 60 * 1000) } },
+          { status: "queued", startedAt: { lt: new Date(Date.now() - 15 * 60 * 1000) } },
         ],
       },
       data: { status: "error", errorJson: JSON.stringify({ message: "Timed out" }), finishedAt: new Date() },

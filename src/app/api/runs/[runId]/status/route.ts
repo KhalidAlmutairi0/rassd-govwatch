@@ -11,6 +11,7 @@ export async function GET(
     where: { id: runId },
     select: {
       status: true,
+      siteId: true,
       durationMs: true,
       totalSteps: true,
       passedSteps: true,
@@ -33,9 +34,27 @@ export async function GET(
       status: true,
       responseTimeMs: true,
       error: true,
+      screenshotAfter: true,
+      cursorX: true,
+      cursorY: true,
     },
     orderBy: { id: "asc" },
   });
 
-  return NextResponse.json({ ...run, elements });
+  // Build URL for the latest viewport screenshot (NOT full-page)
+  let latestScreenshot: string | null = null;
+  let cursorX: number | null = null;
+  let cursorY: number | null = null;
+  const lastEl = [...elements].reverse().find(e => e.screenshotAfter);
+  if (lastEl?.screenshotAfter) {
+    const absPath = lastEl.screenshotAfter;
+    const idx = absPath.replace(/\\/g, "/").indexOf("artifacts/");
+    if (idx >= 0) {
+      latestScreenshot = "/" + absPath.replace(/\\/g, "/").substring(idx);
+    }
+    cursorX = lastEl.cursorX;
+    cursorY = lastEl.cursorY;
+  }
+
+  return NextResponse.json({ ...run, elements, latestScreenshot, cursorX, cursorY });
 }
