@@ -2,7 +2,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { CreateSiteSchema } from "@/lib/validators";
-import "@/lib/init-ws"; // Initialize WebSocket server
+// Lazy-init WebSocket server (dynamic import prevents middleware bundle bleed)
+import("@/lib/init-ws").then(m => m.ensureWebSocketServer?.()).catch(() => {});
 
 // GET /api/sites - List all sites
 export async function GET() {

@@ -1674,6 +1674,106 @@ function AvailabilityGauge({ pct, size = 80, label }: { pct: number | null; size
   );
 }
 
+function EcgCardCanvas({ rag, offset = 0 }: { rag: string; offset?: number }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const rafRef = useRef<number>(0);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const W = 120, H = 36, mid = H / 2;
+    const color =
+      rag === "green" ? "#22c55e" :
+      rag === "yellow" ? "#f59e0b" :
+      rag === "red" ? "#ef4444" :
+      "#6b7280";
+
+    const isFlat = rag === "red" || rag === "unknown";
+    const isIrregular = rag === "yellow";
+    const speed = isIrregular ? 36 : 54;
+    const cycleLen = isIrregular ? 88 : 64;
+    const amp = H * 0.40;
+
+    function getY(phase: number, cycleNum: number): number {
+      if (isFlat) return mid;
+      if (isIrregular) {
+        const scale = cycleNum % 2 === 0 ? 1 : 0.65;
+        if (phase >= 0.30 && phase < 0.41) {
+          const t = (phase - 0.30) / 0.11;
+          return mid - Math.sin(t * Math.PI) * amp * 0.88 * scale;
+        }
+        if (phase >= 0.41 && phase < 0.50) {
+          const t = (phase - 0.41) / 0.09;
+          return mid + Math.sin(t * Math.PI) * amp * 0.28 * scale;
+        }
+        if (phase >= 0.60 && phase < 0.74) {
+          const t = (phase - 0.60) / 0.14;
+          return mid - Math.sin(t * Math.PI) * amp * 0.18 * scale;
+        }
+        return mid;
+      }
+      // healthy: classic P-QRS-T
+      if (phase >= 0.10 && phase < 0.20) {
+        const t = (phase - 0.10) / 0.10;
+        return mid - Math.sin(t * Math.PI) * H * 0.13;
+      }
+      if (phase >= 0.28 && phase < 0.33) {
+        const t = (phase - 0.28) / 0.05;
+        return mid + Math.sin(t * Math.PI) * H * 0.17;
+      }
+      if (phase >= 0.33 && phase < 0.43) {
+        const t = (phase - 0.33) / 0.10;
+        return mid - Math.sin(t * Math.PI) * amp;
+      }
+      if (phase >= 0.43 && phase < 0.50) {
+        const t = (phase - 0.43) / 0.07;
+        return mid + Math.sin(t * Math.PI) * H * 0.21;
+      }
+      if (phase >= 0.56 && phase < 0.73) {
+        const t = (phase - 0.56) / 0.17;
+        return mid - Math.sin(t * Math.PI) * H * 0.19;
+      }
+      return mid;
+    }
+
+    let startTs = 0;
+    function draw(ts: number) {
+      if (!startTs) startTs = ts;
+      const elapsed = (ts - startTs) / 1000 + offset;
+      ctx!.clearRect(0, 0, W, H);
+
+      ctx!.strokeStyle = "rgba(255,255,255,0.05)";
+      ctx!.lineWidth = 0.5;
+      ctx!.beginPath(); ctx!.moveTo(0, mid); ctx!.lineTo(W, mid); ctx!.stroke();
+
+      ctx!.shadowColor = color; ctx!.shadowBlur = isFlat ? 2 : 4;
+      ctx!.strokeStyle = color; ctx!.lineWidth = 1.5;
+      ctx!.lineJoin = "round"; ctx!.lineCap = "round";
+      ctx!.beginPath();
+
+      const pixOff = (elapsed * speed) % cycleLen;
+      for (let x = 0; x <= W; x++) {
+        const cx = (x + pixOff) % cycleLen;
+        const phase = cx / cycleLen;
+        const cycleNum = Math.floor((x + pixOff) / cycleLen);
+        const y = getY(phase, cycleNum);
+        x === 0 ? ctx!.moveTo(x, y) : ctx!.lineTo(x, y);
+      }
+      ctx!.stroke();
+      ctx!.shadowBlur = 0;
+      rafRef.current = requestAnimationFrame(draw);
+    }
+
+    rafRef.current = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [rag, offset]);
+
+  return <canvas ref={canvasRef} width={120} height={36} style={{ display: "block" }} />;
+}
+
 function KPIDashboardTab() {
   const [summary, setSummary] = useState<KPISummary | null>(null);
   const [platforms, setPlatforms] = useState<PlatformKPI[]>([]);
@@ -1781,7 +1881,7 @@ function KPIDashboardTab() {
 
         {/* Platform status cards grid */}
         <div className="p-5 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-          {platforms.map((p) => (
+          {platforms.map((p, idx) => (
             <div key={p.siteId} className={`rounded-xl border p-3 ${ragBg(p.rag)} transition-all`}>
               <div className="flex items-center gap-2 mb-2">
                 <span className={`w-2.5 h-2.5 rounded-full ${ragDot(p.rag)} ${p.rag !== "green" && p.rag !== "unknown" ? "animate-pulse" : ""}`} />
@@ -1790,7 +1890,10 @@ function KPIDashboardTab() {
               <p className="text-sm font-bold text-white leading-tight">{p.name}</p>
               <p className="text-[10px] text-[hsl(var(--muted-foreground))] font-mono mt-0.5">{p.baseUrl.replace(/^https?:\/\//, "")}</p>
               {p.ministryName && <p className="text-[9px] text-[hsl(var(--muted-foreground))] mt-0.5">{p.ministryName}</p>}
-              <div className="flex items-center justify-between mt-2 pt-2 border-t border-white/5">
+              <div className="mt-2 mb-1 flex justify-center">
+                <EcgCardCanvas rag={p.rag} offset={idx * 0.41} />
+              </div>
+              <div className="flex items-center justify-between mt-1 pt-2 border-t border-white/5">
                 <span className="text-[9px] text-[hsl(var(--muted-foreground))]">Last scan</span>
                 <span className="text-[10px] text-white/70">{timeAgo(p.lastRunAt)}</span>
               </div>
