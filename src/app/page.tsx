@@ -175,7 +175,7 @@ function UptimeBar({ segments, pct }: { segments: boolean[]; pct: number }) {
           />
         ))}
       </div>
-      <div className="flex justify-between" style={{ fontSize: "10px", color: "#3a6080" }}>
+      <div className="flex justify-between" style={{ fontSize: "10px", color: "#5a8fa8" }}>
         <span>٢٤ ساعة الماضية</span>
         <span>{pct.toFixed(1)}% وقت التشغيل</span>
       </div>
@@ -257,7 +257,7 @@ function SiteCard({ site }: { site: SiteStatus }) {
           >
             {site.nameAr}
           </h3>
-          <p className="text-xs mt-0.5" style={{ color: "#2e5870" }}>
+          <p className="text-xs mt-0.5" style={{ color: "#5a8fa8" }}>
             {site.baseUrl}
           </p>
         </div>
@@ -282,7 +282,7 @@ function SiteCard({ site }: { site: SiteStatus }) {
           >
             {isDown ? "---" : liveBpm}
           </span>
-          <span className="text-xs pb-0.5" style={{ color: "#2e5870" }}>bpm</span>
+          <span className="text-xs pb-0.5" style={{ color: "#5a8fa8" }}>bpm</span>
         </div>
         <div className="text-right">
           <div
@@ -291,7 +291,7 @@ function SiteCard({ site }: { site: SiteStatus }) {
           >
             {isDown ? "timeout" : `${site.latencyMs} ms`}
           </div>
-          <div className="text-xs" style={{ color: "#2e5870" }}>زمن الاستجابة</div>
+          <div className="text-xs" style={{ color: "#5a8fa8" }}>زمن الاستجابة</div>
         </div>
       </div>
 
@@ -378,8 +378,11 @@ export default function HeartbeatPage() {
 
   return (
     <>
+      {/* eslint-disable-next-line @next/next/no-page-custom-font */}
+      <link rel="preconnect" href="https://fonts.googleapis.com" />
+      <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+      <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&display=swap" rel="stylesheet" />
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&display=swap');
         html, body { background: #060d1a !important; margin: 0; }
         ::-webkit-scrollbar { width: 4px; }
         ::-webkit-scrollbar-track { background: #060d1a; }
@@ -418,7 +421,7 @@ export default function HeartbeatPage() {
                   className="w-2 h-2 rounded-full animate-pulse flex-shrink-0"
                   style={{ background: "#63d0fc", boxShadow: "0 0 8px #63d0fc" }}
                 />
-                <span style={{ color: "#2e5870", fontSize: "12px" }}>
+                <span style={{ color: "#5a8fa8", fontSize: "12px" }}>
                   آخر تحديث {lastUpdated}
                 </span>
               </div>
@@ -439,7 +442,7 @@ export default function HeartbeatPage() {
               >
                 نبض المواقع الحكومية
               </h1>
-              <p style={{ color: "#2e5870", fontSize: "14px" }}>
+              <p style={{ color: "#5a8fa8", fontSize: "14px" }}>
                 رصد مستمر وآني للخدمات الرقمية الحكومية السعودية
               </p>
 
@@ -472,7 +475,7 @@ export default function HeartbeatPage() {
                   style={{
                     background: "rgba(99,208,252,0.06)",
                     border: "1px solid rgba(99,208,252,0.12)",
-                    color: "#2e5870",
+                    color: "#5a8fa8",
                   }}
                 >
                   {sites.length} مواقع مراقبة
@@ -497,7 +500,7 @@ export default function HeartbeatPage() {
                 </div>
                 <p
                   className="mt-1.5 text-center"
-                  style={{ color: "#2e5870", fontSize: "11px" }}
+                  style={{ color: "#5a8fa8", fontSize: "11px" }}
                 >
                   {overallPct}% من المواقع تعمل الآن
                 </p>
