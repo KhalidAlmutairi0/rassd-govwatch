@@ -63,7 +63,30 @@
       "Bash(grep -n \"NEXT_PUBLIC_WS_URL\\\\|wsUrl\\\\|localhost:300\" src/app/live/[runId]/page.tsx)",
       "Bash(npx playwright:*)",
       "Bash(npx kill-port:*)",
-      "Bash(sqlite3 prisma/dev.db \"SELECT id, status, errorJson, startedAt, durationMs FROM Run ORDER BY startedAt DESC LIMIT 5;\")"
+      "Bash(sqlite3 prisma/dev.db \"SELECT id, status, errorJson, startedAt, durationMs FROM Run ORDER BY startedAt DESC LIMIT 5;\")",
+      "Bash(node_modules/.bin/prisma db *)",
+      "Bash(DATABASE_URL=\"file:./dev.db\" node_modules/.bin/prisma db push --skip-generate)",
+      "Bash(grep -n 'page.screenshot\\\\|element-${stepNum}' src/lib/ai-executor.ts)",
+      "Bash(python3 -c \"import json, sys; p=json.load\\(sys.stdin\\); print\\('scripts:', json.dumps\\(p.get\\('scripts',{}\\), indent=2\\)\\); print\\('deps:', list\\(p.get\\('dependencies',{}\\).keys\\(\\)\\)[:5], '... +', len\\(p.get\\('dependencies',{}\\)\\)-5\\)\")",
+      "Bash(node_modules/.bin/tsc --noEmit)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(DATABASE_URL=file:./prisma/dev.db node -e ' *)",
+      "Bash(env)",
+      "Bash(DATABASE_URL=\"file:./dev.db\" npx tsx *)",
+      "Bash(DATABASE_URL=file:./dev.db node -e ' *)",
+      "Bash(pkill -f 'tsx src/worker/scheduler.ts')",
+      "Bash(grep -vE '^\\(node_modules|\\\\.git|\\\\.next|artifacts\\)$')",
+      "Bash(gh pr create --repo KhalidAlmutairi0/rassd-govwatch --base master --head refactor/ai-cost-and-cleanup --title 'Reduce AI cost, harden Playwright, purge ~3700 LOC of dead code' --body ' *)",
+      "Bash(echo \"tsc exit: $?\")",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(git mv *)",
+      "Bash(sed -i.bak 's|exec node server\\\\.js|exec node scripts/server.js|g' scripts/start.sh)",
+      "Bash(sed -i.bak 's|^COPY start\\\\.sh ./start\\\\.sh|COPY scripts/start.sh ./start.sh|' Dockerfile)",
+      "Bash(grep -vE '^\\(node_modules|\\\\.git|\\\\.next|artifacts|\\\\.env$|\\\\.DS_Store\\)$')",
+      "Bash(pkill -f 'scripts/server.js')",
+      "Bash(pkill -f 'node -e')"
     ]
   }
 }

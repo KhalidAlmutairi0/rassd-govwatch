@@ -51,7 +51,7 @@ RUN mkdir -p artifacts /data
 
 EXPOSE 3000
 
-COPY start.sh ./start.sh
+COPY scripts/start.sh ./start.sh
 RUN chmod +x start.sh
 
 CMD ["./start.sh"]
