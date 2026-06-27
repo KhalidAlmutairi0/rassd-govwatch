@@ -1,7 +1,6 @@
 // src/lib/ai-agent.ts
 // THE AI AGENT — The brain that understands pages and decides what to test
 
-import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 
 // ============================================================
@@ -342,7 +341,7 @@ Arabic Summary
 }
 
 // ============================================================
-// AI Provider Abstraction (supports Claude + OpenAI)
+// AI Provider Abstraction — OpenAI primary, Groq text-only fallback
 // ============================================================
 
 async function callAIWithVision(
@@ -350,32 +349,6 @@ async function callAIWithVision(
   ...screenshots: Buffer[]
 ): Promise<string> {
   const provider = detectProvider();
-
-  if (provider === "claude") {
-    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-    const content: any[] = [];
-
-    // Add screenshots as images (JPEG — caller is responsible for encoding)
-    for (const screenshot of screenshots) {
-      content.push({
-        type: "image",
-        source: {
-          type: "base64",
-          media_type: "image/jpeg",
-          data: screenshot.toString("base64"),
-        },
-      });
-    }
-    content.push({ type: "text", text: prompt });
-
-    const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 4096,
-      messages: [{ role: "user", content }],
-    });
-
-    return extractJSON(response.content[0].type === "text" ? response.content[0].text : "");
-  }
 
   if (provider === "openai") {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -402,7 +375,7 @@ async function callAIWithVision(
   }
 
   if (provider === "groq") {
-    // Groq doesn't support vision — use text-only prompt
+    // Groq doesn't support vision — fall back to a text-only prompt
     const groq = new OpenAI({
       apiKey: process.env.GROQ_API_KEY,
       baseURL: "https://api.groq.com/openai/v1",
@@ -417,29 +390,16 @@ async function callAIWithVision(
     return extractJSON(response.choices[0].message.content || "");
   }
 
-  // Fallback: no AI — return empty JSON for fallback handling
   return "{}";
 }
 
 async function callAI(prompt: string): Promise<string> {
   const provider = detectProvider();
 
-  if (provider === "claude") {
-    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-    // Text-only — route to Haiku (cheap, fast). Vision stays on Sonnet.
-    const response = await anthropic.messages.create({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 2048,
-      messages: [{ role: "user", content: prompt }],
-    });
-
-    return response.content[0].type === "text" ? response.content[0].text : "";
-  }
-
   if (provider === "openai") {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+    // Text-only — route to the cheaper 4o-mini. Vision stays on gpt-4o.
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       max_tokens: 2048,
@@ -467,8 +427,7 @@ async function callAI(prompt: string): Promise<string> {
   return "";
 }
 
-function detectProvider(): "claude" | "openai" | "groq" | "none" {
-  if (process.env.ANTHROPIC_API_KEY) return "claude";
+function detectProvider(): "openai" | "groq" | "none" {
   if (process.env.OPENAI_API_KEY) return "openai";
   if (process.env.GROQ_API_KEY) return "groq";
   return "none";

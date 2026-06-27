@@ -5,7 +5,7 @@ Real-time monitoring of Saudi government websites with live browser streaming an
 ## Features
 
 - **Live Browser View**: Watch AI agents browse websites in real-time via CDP screencast (manual runs only)
-- **AI-Powered Analysis**: Per-element verdict via Claude Sonnet 4.6 vision; executive summaries via Claude Haiku 4.5
+- **AI-Powered Analysis**: Per-element verdict via OpenAI gpt-4o vision; executive summaries via gpt-4o-mini
 - **Continuous Monitoring**: Automated monitoring of pre-seeded Saudi government sites every N minutes
 - **Cost-gated AI**: Heuristic-first element assessment + content-hash gate skip vision calls when nothing changed
 - **Incident Detection**: Automatic grouping, severity assessment, and escalation timers for failures
@@ -17,7 +17,7 @@ Real-time monitoring of Saudi government websites with live browser streaming an
 - **Database**: SQLite + Prisma ORM
 - **Browser Automation**: Playwright (Chromium)
 - **Live Streaming**: CDP Screencast + WebSocket
-- **AI**: Claude (Anthropic) / GPT-4 (OpenAI)
+- **AI**: OpenAI gpt-4o (vision) + gpt-4o-mini (text summaries)
 - **UI**: TailwindCSS + shadcn/ui
 
 ## Quick Start
@@ -39,10 +39,10 @@ This will create the SQLite database and seed 10 Saudi government websites + two
 
 ### 3. Configure Environment (Optional)
 
-Copy `.env.example` to `.env` and add a Claude key to enable vision-driven page understanding and richer summaries:
+Copy `.env.example` to `.env` and add an OpenAI key to enable vision-driven page understanding and richer summaries:
 
 ```env
-ANTHROPIC_API_KEY="sk-ant-..."
+OPENAI_API_KEY="sk-..."
 ```
 
 Without a key the system uses heuristic page analysis and template summaries — monitoring still works.
