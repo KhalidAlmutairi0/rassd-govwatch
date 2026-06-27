@@ -1,7 +1,7 @@
 // src/app/api/notifications/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/auth";
+import { prisma } from "@/server/db/prisma";
+import { getCurrentUser } from "@/server/auth/auth";
 
 export async function GET(request: NextRequest) {
   try {

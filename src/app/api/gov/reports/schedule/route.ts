@@ -1,7 +1,7 @@
 // src/app/api/gov/reports/schedule/route.ts
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/auth";
+import { prisma } from "@/server/db/prisma";
+import { getCurrentUser } from "@/server/auth/auth";
 import { z } from "zod";
 
 const Schema = z.object({

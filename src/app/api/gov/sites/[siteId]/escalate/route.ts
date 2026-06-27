@@ -1,9 +1,9 @@
 // src/app/api/gov/sites/[siteId]/escalate/route.ts
 // POST — governor escalates a site to the CTO / senior team
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/auth";
-import { startEscalationTimer } from "@/lib/escalation";
+import { prisma } from "@/server/db/prisma";
+import { getCurrentUser } from "@/server/auth/auth";
+import { startEscalationTimer } from "@/server/db/escalation";
 
 export async function POST(
   request: NextRequest,

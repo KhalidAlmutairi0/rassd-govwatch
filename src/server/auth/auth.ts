@@ -1,7 +1,7 @@
 // src/lib/auth.ts
 import { createHash, randomBytes, pbkdf2Sync } from "crypto";
 import { cookies } from "next/headers";
-import { prisma } from "./prisma";
+import { prisma } from "@/server/db/prisma";
 
 const SESSION_COOKIE = "rassd_session";
 const SESSION_DURATION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days

@@ -2,12 +2,12 @@
 // AI Execution Engine — Runs AI's test plan with Playwright
 
 import { Browser, Page, chromium, CDPSession } from "playwright";
-import { analyzePageAndCreatePlan, assessElementResult, generateFinalSummary, tryConfidentAssessment, templateSummary, AgentTestPlan, AgentTestAction, AgentStepResult } from "./ai-agent";
-import { prisma } from "./prisma";
+import { analyzePageAndCreatePlan, assessElementResult, generateFinalSummary, tryConfidentAssessment, templateSummary, AgentTestPlan, AgentTestAction, AgentStepResult } from "@/server/ai/ai-agent";
+import { prisma } from "@/server/db/prisma";
 import { promises as fs } from "fs";
 import path from "path";
 import { createHash } from "crypto";
-import { getAccessibilityTree, formatAccessibilityTree } from "./accessibility-tree";
+import { getAccessibilityTree, formatAccessibilityTree } from "@/server/browser/accessibility-tree";
 
 
 function parseSummaryText(raw: string): {

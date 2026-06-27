@@ -83,27 +83,33 @@ Login with the seeded demo credentials (printed at the end of `npm run seed`).
 │   └── seed.ts               # Seed data
 ├── public/
 ├── src/
-│   ├── app/
-│   │   ├── api/              # API routes (auth, sites, runs, gov, artifacts, …)
+│   ├── app/                  # Frontend pages + API routes (Next.js app router)
+│   │   ├── api/              # auth, sites, runs, gov, artifacts, …
 │   │   ├── dashboard/        # Developer dashboard
 │   │   ├── gov/              # Governor dashboard
 │   │   ├── live/             # Live browser view
 │   │   └── report/           # Test reports
-│   ├── components/
-│   │   ├── layout/  live/  report/  ui/
+│   ├── components/           # Frontend React (layout / live / report / ui)
 │   ├── lib/
-│   │   ├── ai-agent.ts       # AI prompts + heuristic-first verdict
-│   │   ├── ai-executor.ts    # Playwright execution + per-element loop
-│   │   ├── accessibility-tree.ts
-│   │   ├── ably-broadcast.ts # WS fallback over Ably (optional)
-│   │   ├── auth.ts           # Session + password reset
-│   │   ├── escalation.ts     # Incident escalation timers
-│   │   ├── incidents.ts      # Incident grouping
-│   │   ├── notifications.ts  # Email / Slack alerts
-│   │   ├── prisma.ts         # Prisma client singleton
-│   │   ├── scoring.ts        # Site score computation
-│   │   ├── validators.ts     # Zod schemas + isSameDomain
-│   │   └── ws-server.ts      # WebSocket server (frames + step updates)
+│   │   └── utils.ts          # Shared frontend/backend util (tailwind cn())
+│   ├── server/               # Backend logic — server-only, no React
+│   │   ├── ai/ai-agent.ts            # AI prompts + heuristic-first verdict
+│   │   ├── auth/auth.ts              # Session + password reset
+│   │   ├── browser/
+│   │   │   ├── ai-executor.ts        # Playwright execution + per-element loop
+│   │   │   └── accessibility-tree.ts
+│   │   ├── db/
+│   │   │   ├── prisma.ts             # Prisma client singleton
+│   │   │   ├── incidents.ts          # Incident grouping
+│   │   │   ├── scoring.ts            # Site score computation
+│   │   │   └── escalation.ts         # Incident escalation timers
+│   │   ├── notifications/
+│   │   │   ├── notifications.ts      # Email / Slack alerts
+│   │   │   └── ably-broadcast.ts     # WS fallback over Ably (optional)
+│   │   ├── ws/
+│   │   │   ├── ws-server.ts          # WebSocket server
+│   │   │   └── init-ws.ts
+│   │   └── validators.ts             # Zod schemas + isSameDomain
 │   └── worker/scheduler.ts   # node-cron scheduler + artifact retention
 └── artifacts/                # Run-scoped screenshots, traces (gitignored)
 ```

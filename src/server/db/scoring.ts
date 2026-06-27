@@ -2,7 +2,7 @@
 // Computes UX / QA / Accessibility / Performance sub-scores from run data.
 // All scores are 0–100; overall = weighted average.
 
-import { prisma } from "./prisma";
+import { prisma } from "@/server/db/prisma";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

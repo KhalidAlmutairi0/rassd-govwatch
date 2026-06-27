@@ -1,6 +1,6 @@
 // src/app/api/auth/login/route.ts
 import { NextResponse } from "next/server";
-import { attemptLogin, SESSION_COOKIE } from "@/lib/auth";
+import { attemptLogin, SESSION_COOKIE } from "@/server/auth/auth";
 import { z } from "zod";
 
 const LoginSchema = z.object({

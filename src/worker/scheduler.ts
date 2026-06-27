@@ -2,12 +2,12 @@
 // This runs as a SEPARATE process: `npm run worker`
 
 import cron from "node-cron";
-import { prisma } from "../lib/prisma";
-import { executeAITest } from "../lib/ai-executor";
-import { processRunResult } from "../lib/incidents";
-import { initWebSocketServer } from "../lib/ws-server";
-import { checkEscalations } from "../lib/escalation";
-import { storeSiteScore } from "../lib/scoring";
+import { prisma } from "../server/db/prisma";
+import { executeAITest } from "../server/browser/ai-executor";
+import { processRunResult } from "../server/db/incidents";
+import { initWebSocketServer } from "../server/ws/ws-server";
+import { checkEscalations } from "../server/db/escalation";
+import { storeSiteScore } from "../server/db/scoring";
 import path from "path";
 import { promises as fs } from "fs";
 
@@ -173,7 +173,7 @@ async function runJourney(site: any, journey: any, existingRunId?: string) {
   }
 
   // Broadcast to any live viewers watching this run
-  const { broadcast } = await import("../lib/ws-server");
+  const { broadcast } = await import("../server/ws/ws-server");
   broadcast(run.id, { type: "run-status", status: "running" });
 
   try {

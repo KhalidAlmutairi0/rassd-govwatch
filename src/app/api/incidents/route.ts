@@ -1,6 +1,6 @@
 // src/app/api/incidents/route.ts
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { prisma } from "@/server/db/prisma";
 
 // GET /api/incidents - List all incidents
 export async function GET(req: Request) {

@@ -2,8 +2,8 @@
 // PATCH — acknowledge a What's New event (marks related notification read,
 //          or marks directive/incident as acknowledged via notification)
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/auth";
+import { prisma } from "@/server/db/prisma";
+import { getCurrentUser } from "@/server/auth/auth";
 
 export async function PATCH(
   request: NextRequest,

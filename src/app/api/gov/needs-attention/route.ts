@@ -1,8 +1,8 @@
 // src/app/api/gov/needs-attention/route.ts
 // Powers Screen 4 — Needs Your Attention (critical items requiring governor action)
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/auth";
+import { prisma } from "@/server/db/prisma";
+import { getCurrentUser } from "@/server/auth/auth";
 
 type ActionType = "issue_directive" | "follow_up" | "escalate";
 type Severity = "critical" | "warning" | "info";

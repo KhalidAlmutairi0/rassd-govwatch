@@ -1,8 +1,8 @@
 // src/app/api/gov/daily-brief/route.ts
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/auth";
-import { getGreeting, toHijriDate, getGrade } from "@/lib/scoring";
+import { prisma } from "@/server/db/prisma";
+import { getCurrentUser } from "@/server/auth/auth";
+import { getGreeting, toHijriDate, getGrade } from "@/server/db/scoring";
 
 export async function GET() {
   try {

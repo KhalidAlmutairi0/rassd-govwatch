@@ -1,6 +1,6 @@
 // src/lib/notifications.ts
 // Non-blocking async notification system
-import { prisma } from "./prisma";
+import { prisma } from "@/server/db/prisma";
 
 export type NotificationType = "incident" | "recovery" | "report" | "system" | "info";
 

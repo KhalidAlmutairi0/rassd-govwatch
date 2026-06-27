@@ -2,10 +2,10 @@
 // Triggers scan execution directly in the Next.js process.
 // Broadcasts live frames through global.__liveSessions (set by server.js).
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { executeAITest } from "@/lib/ai-executor";
-import { processRunResult } from "@/lib/incidents";
-import { storeSiteScore } from "@/lib/scoring";
+import { prisma } from "@/server/db/prisma";
+import { executeAITest } from "@/server/browser/ai-executor";
+import { processRunResult } from "@/server/db/incidents";
+import { storeSiteScore } from "@/server/db/scoring";
 import path from "path";
 
 function createRelay(runId: string): { send: (msg: object) => void; close: () => void } {

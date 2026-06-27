@@ -1,9 +1,9 @@
 // src/app/api/sites/route.ts
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { CreateSiteSchema } from "@/lib/validators";
+import { prisma } from "@/server/db/prisma";
+import { CreateSiteSchema } from "@/server/validators";
 // Lazy-init WebSocket server (dynamic import prevents middleware bundle bleed)
-import("@/lib/init-ws").then(m => m.ensureWebSocketServer?.()).catch(() => {});
+import("@/server/ws/init-ws").then(m => m.ensureWebSocketServer?.()).catch(() => {});
 
 // GET /api/sites - List all sites
 export async function GET() {

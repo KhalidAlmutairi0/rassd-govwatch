@@ -1,6 +1,6 @@
 // src/app/api/auth/forgot-password/route.ts
 import { NextResponse } from "next/server";
-import { createPasswordReset } from "@/lib/auth";
+import { createPasswordReset } from "@/server/auth/auth";
 import { z } from "zod";
 
 const Schema = z.object({ email: z.string().email() });
