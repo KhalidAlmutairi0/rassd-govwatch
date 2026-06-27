@@ -4,12 +4,12 @@ Real-time monitoring of Saudi government websites with live browser streaming an
 
 ## Features
 
-- ✅ **Live Browser View**: Watch AI agents browse websites in real-time via CDP screencast
-- ✅ **AI-Powered Analysis**: Automatic test generation and summaries using Claude AI
-- ✅ **Instant Testing**: Test any government website URL instantly
-- ✅ **Continuous Monitoring**: Automated monitoring of pre-seeded Saudi government sites
-- ✅ **Incident Detection**: Automatic grouping and severity assessment of failures
-- ✅ **Safe & Secure**: Black-box testing only, same-domain enforcement, no destructive actions
+- **Live Browser View**: Watch AI agents browse websites in real-time via CDP screencast (manual runs only)
+- **AI-Powered Analysis**: Per-element verdict via Claude Sonnet 4.6 vision; executive summaries via Claude Haiku 4.5
+- **Continuous Monitoring**: Automated monitoring of pre-seeded Saudi government sites every N minutes
+- **Cost-gated AI**: Heuristic-first element assessment + content-hash gate skip vision calls when nothing changed
+- **Incident Detection**: Automatic grouping, severity assessment, and escalation timers for failures
+- **Safe & Secure**: Black-box testing only, same-domain enforcement, no destructive actions
 
 ## Tech Stack
 
@@ -35,17 +35,17 @@ npm run db:push
 npm run seed
 ```
 
-This will create the SQLite database and seed 5 Saudi government websites.
+This will create the SQLite database and seed 10 Saudi government websites + two demo users.
 
 ### 3. Configure Environment (Optional)
 
-Add your Claude API key to `.env` for AI-powered features:
+Copy `.env.example` to `.env` and add a Claude key to enable vision-driven page understanding and richer summaries:
 
 ```env
-ANTHROPIC_API_KEY="your-claude-api-key"
+ANTHROPIC_API_KEY="sk-ant-..."
 ```
 
-The system works without AI keys using template-based summaries.
+Without a key the system uses heuristic page analysis and template summaries — monitoring still works.
 
 ### 4. Start Development Server
 
@@ -61,64 +61,64 @@ npm run worker
 
 Open [http://localhost:3000](http://localhost:3000)
 
-> **Note**: The worker is optional. You can use the platform without it by manually triggering tests from the dashboard or instant test feature.
+> **Note**: The worker is required for automated monitoring. The web server alone covers manual runs triggered from the dashboard.
 
 ## Usage
 
-### Instant Test
-
-1. Go to the homepage
-2. Enter any government website URL (e.g., `https://www.absher.sa`)
-3. Click "Start Test"
-4. Watch the live browser stream as tests execute
-5. View the AI-generated report
-
 ### Dashboard
 
-Visit `/dashboard` to see all monitored government websites with:
-- Real-time health status
-- Success rates
-- Open incidents
-- Manual test triggering
+- **Developer** (`/dashboard`) — site list with health status, manual test triggering, run history, incidents
+- **Governor** (`/gov`) — portfolio-level KPI dashboard, daily brief, directives
+- **Report** (`/report/[runId]`) — full run report with AI summary, per-element screenshots, console + network breakdown
+- **Live view** (`/live/[runId]`) — real-time CDP screencast while a manual run executes
+
+Login with the seeded demo credentials (printed at the end of `npm run seed`).
 
 ## Project Structure
 
 ```
-├── src/
-│   ├── app/                  # Next.js app router pages
-│   │   ├── api/             # API routes
-│   │   ├── dashboard/       # Dashboard UI
-│   │   ├── live/           # Live browser view
-│   │   └── report/         # Test reports
-│   ├── components/          # React components
-│   │   └── ui/             # shadcn/ui components
-│   └── lib/                 # Core libraries
-│       ├── executor.ts      # Playwright test executor
-│       ├── page-analyzer.ts # Page structure analyzer
-│       ├── test-generator.ts # Test generation (heuristic)
-│       ├── test-generator-ai.ts # AI-enhanced test generation
-│       ├── ai.ts           # AI provider abstraction
-│       ├── ai-summary.ts   # AI summary generation
-│       ├── ws-server.ts    # WebSocket server
-│       ├── incidents.ts    # Incident detection
-│       ├── validators.ts   # Zod schemas
-│       └── prisma.ts       # Prisma client
+├── docs/                     # Audits, design notes
 ├── prisma/
-│   ├── schema.prisma       # Database schema
-│   └── seed.ts            # Seed data
-└── artifacts/             # Test artifacts (screenshots, traces)
+│   ├── schema.prisma         # DB schema (indexed)
+│   └── seed.ts               # Seed data
+├── public/
+├── src/
+│   ├── app/
+│   │   ├── api/              # API routes (auth, sites, runs, gov, artifacts, …)
+│   │   ├── dashboard/        # Developer dashboard
+│   │   ├── gov/              # Governor dashboard
+│   │   ├── live/             # Live browser view
+│   │   └── report/           # Test reports
+│   ├── components/
+│   │   ├── layout/  live/  report/  ui/
+│   ├── lib/
+│   │   ├── ai-agent.ts       # AI prompts + heuristic-first verdict
+│   │   ├── ai-executor.ts    # Playwright execution + per-element loop
+│   │   ├── accessibility-tree.ts
+│   │   ├── ably-broadcast.ts # WS fallback over Ably (optional)
+│   │   ├── auth.ts           # Session + password reset
+│   │   ├── escalation.ts     # Incident escalation timers
+│   │   ├── incidents.ts      # Incident grouping
+│   │   ├── notifications.ts  # Email / Slack alerts
+│   │   ├── prisma.ts         # Prisma client singleton
+│   │   ├── scoring.ts        # Site score computation
+│   │   ├── validators.ts     # Zod schemas + isSameDomain
+│   │   └── ws-server.ts      # WebSocket server (frames + step updates)
+│   └── worker/scheduler.ts   # node-cron scheduler + artifact retention
+└── artifacts/                # Run-scoped screenshots, traces (gitignored)
 ```
 
 ## API Endpoints
 
-- `GET /api/sites` - List all sites
-- `POST /api/sites` - Create new site
-- `GET /api/sites/[id]` - Get site details
-- `POST /api/sites/[id]/runs` - Trigger test run
-- `GET /api/sites/[id]/runs/[runId]` - Get run details
-- `POST /api/test` - Instant test for any URL
-- `GET /api/incidents` - List incidents
-- `GET /api/artifacts/[...path]` - Serve artifact files
+- `POST /api/auth/login`, `/logout`, `/me`, `/forgot-password`, `/reset-password`
+- `GET /api/sites`, `POST /api/sites` — list / create monitored site
+- `GET /api/sites/[id]`, `DELETE /api/sites/[id]`
+- `POST /api/sites/[id]/runs` — queue a manual run
+- `GET /api/sites/[id]/runs/[runId]` — run details
+- `POST /api/runs/[runId]/start` — execute a queued run (called by live view)
+- `GET /api/runs/[runId]/status`, `GET /api/runs/[runId]/elements`
+- `GET /api/gov/...` — governor dashboard endpoints
+- `GET /api/artifacts/[...path]` — serve screenshots / traces
 
 ## Safety Features
 
@@ -140,13 +140,7 @@ The system enforces strict safety rules:
 
 ## Pre-Seeded Sites
 
-The system comes pre-configured with these Saudi government websites:
-
-1. **Absher** (أبشر) - https://www.absher.sa
-2. **Unified National Platform** (المنصة الوطنية الموحدة) - https://www.my.gov.sa
-3. **Ministry of Health** (وزارة الصحة) - https://www.moh.gov.sa
-4. **Qiwa** (قوى) - https://qiwa.sa
-5. **Saudi Digital Academy** (الأكاديمية الرقمية السعودية) - https://sda.edu.sa
+The system seeds 10 Saudi government websites: Absher, Unified National Platform (my.gov.sa), Ministry of Health, Qiwa, Hadaf, Tawakkalna, Unified Admission (rbu.edu.sa), Balady, Taminaty (GOSI), and Najiz. See `prisma/seed.ts` for the full list.
 
 ## Development Commands
 
@@ -163,9 +157,9 @@ npm run setup        # Install Playwright browsers (run once)
 
 ## WebSocket Protocol
 
-The live view uses WebSocket for real-time updates:
+The worker process exposes a WebSocket server (default port `3003`, override with `WORKER_PORT`) that the live view connects to:
 
-- `ws://localhost:3001/live/{runId}` - Connect to run stream
+- `ws://localhost:3003/live/{runId}` - Connect to run stream
 
 Message types:
 - `browser-frame` - JPEG frame from CDP screencast
