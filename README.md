@@ -106,10 +106,10 @@ Login with the seeded demo credentials (printed at the end of `npm run seed`).
 │   │   ├── notifications/
 │   │   │   ├── notifications.ts      # Email / Slack alerts
 │   │   │   └── ably-broadcast.ts     # WS fallback over Ably (optional)
-│   │   ├── ws/
-│   │   │   ├── ws-server.ts          # WebSocket server
-│   │   │   └── init-ws.ts
-│   │   └── validators.ts             # Zod schemas + isSameDomain
+│   │   ├── shared/validators.ts      # Zod schemas + isSameDomain
+│   │   └── ws/
+│   │       ├── ws-server.ts          # WebSocket server
+│   │       └── init-ws.ts
 │   └── worker/scheduler.ts   # node-cron scheduler + artifact retention
 └── artifacts/                # Run-scoped screenshots, traces (gitignored)
 ```

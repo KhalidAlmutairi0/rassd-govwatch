@@ -1,7 +1,7 @@
 // src/app/api/sites/route.ts
 import { NextResponse } from "next/server";
 import { prisma } from "@/server/db/prisma";
-import { CreateSiteSchema } from "@/server/validators";
+import { CreateSiteSchema } from "@/server/shared/validators";
 // Lazy-init WebSocket server (dynamic import prevents middleware bundle bleed)
 import("@/server/ws/init-ws").then(m => m.ensureWebSocketServer?.()).catch(() => {});
 
