@@ -9,6 +9,7 @@ import { initWebSocketServer } from "../lib/ws-server";
 import { checkEscalations } from "../lib/escalation";
 import { storeSiteScore } from "../lib/scoring";
 import path from "path";
+import { promises as fs } from "fs";
 
 console.log("🚀 GovWatch Worker started");
 
@@ -64,6 +65,37 @@ setInterval(async () => {
 // ── Periodic stuck-run cleanup every 60s ──
 setInterval(() => cleanupStuckRuns(), 60_000);
 
+// ── Artifact retention: delete on-disk files + Artifact rows for runs > N days old ──
+const ARTIFACT_RETENTION_DAYS = parseInt(process.env.ARTIFACT_RETENTION_DAYS || "7", 10);
+
+async function pruneOldArtifacts() {
+  try {
+    const cutoff = new Date(Date.now() - ARTIFACT_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+    const stale = await prisma.run.findMany({
+      where: { startedAt: { lt: cutoff } },
+      select: { id: true, siteId: true },
+    });
+    if (stale.length === 0) return;
+
+    let removed = 0;
+    for (const r of stale) {
+      const dir = path.join(process.cwd(), "artifacts", r.siteId, r.id);
+      const result = await fs.rm(dir, { recursive: true, force: true }).then(() => true).catch(() => false);
+      if (result) removed++;
+    }
+    const { count } = await prisma.artifact.deleteMany({
+      where: { runId: { in: stale.map((r) => r.id) } },
+    });
+    console.log(`🧹 Pruned ${removed} artifact dirs and ${count} Artifact rows older than ${ARTIFACT_RETENTION_DAYS}d`);
+  } catch (e) {
+    console.error("Artifact retention error:", e);
+  }
+}
+
+// Run once on startup, then daily at 03:00
+pruneOldArtifacts();
+cron.schedule("0 3 * * *", () => pruneOldArtifacts());
+
 // ── Scheduled scans: every 5 minutes ──
 cron.schedule("*/5 * * * *", async () => {
   checkEscalations().catch(console.error);
@@ -81,18 +113,26 @@ cron.schedule("*/5 * * * *", async () => {
   }
 
   try {
-    const sites = await prisma.site.findMany({
-      where: { isActive: true, schedule: { gt: 0 } },
+    // Cutoff = "now minus the shortest possible schedule" — filter further per-site below
+    // since each site has its own schedule interval and SQLite doesn't support cross-column math.
+    const candidates = await prisma.site.findMany({
+      where: {
+        isActive: true,
+        schedule: { gt: 0 },
+        OR: [
+          { lastRunAt: null },
+          { lastRunAt: { lt: new Date(Date.now() - 60_000) } }, // at least 1 min old
+        ],
+      },
       include: { journeys: { where: { isDefault: true } } },
     });
 
-    for (const site of sites) {
+    for (const site of candidates) {
       if (scanBusy) break;
 
       const minutesSinceLastRun = site.lastRunAt
         ? (Date.now() - site.lastRunAt.getTime()) / 60000
         : Infinity;
-
       if (minutesSinceLastRun < site.schedule) continue;
 
       for (const journey of site.journeys) {
@@ -140,7 +180,7 @@ async function runJourney(site: any, journey: any, existingRunId?: string) {
     // Set up artifacts directory
     const artifactsDir = path.join(process.cwd(), "artifacts", site.id, run.id);
 
-    // Execute AI test — broadcast frames so governor can watch live
+    // Scheduled runs have no live viewer — skip screencast + cursor jitter.
     const result = await executeAITest({
       url: site.baseUrl,
       runId: run.id,
@@ -148,6 +188,7 @@ async function runJourney(site: any, journey: any, existingRunId?: string) {
       artifactsDir,
       maxElements: 50,
       timeoutPerElement: 5000,
+      liveView: false,
       onBroadcast: (msg: object) => broadcast(run.id, msg),
       onProgress: (event) => {
         console.log(`  ${event.phase}: ${event.description}`);
@@ -215,14 +256,6 @@ async function runJourney(site: any, journey: any, existingRunId?: string) {
         journey.id,
         "failed",
         failedSteps as any
-      );
-    } else if (overallStatus === "error") {
-      await processRunResult(
-        run.id,
-        site.id,
-        journey.id,
-        "error",
-        [{ status: "failed", error: (result as any).error || "Unknown error" }] as any
       );
     } else {
       // All passed - resolve any open incidents

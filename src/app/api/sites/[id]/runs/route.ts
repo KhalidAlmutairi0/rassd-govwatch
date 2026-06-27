@@ -78,7 +78,8 @@ export async function POST(
       });
     }
 
-    // Create run record (keep as "queued" - execution starts when client connects)
+    // Create run record (keep as "queued" - execution starts when client connects
+    // and calls /api/runs/[runId]/start, which re-reads the run + site + journey).
     const run = await prisma.run.create({
       data: {
         siteId: id,
@@ -87,16 +88,6 @@ export async function POST(
         triggeredBy: "manual",
       },
     });
-
-    // Store execution data for later (when client signals ready)
-    global.pendingRuns = global.pendingRuns || new Map();
-    global.pendingRuns.set(run.id, {
-      siteId: site.id,
-      baseUrl: site.baseUrl,
-      journeyId: journey.id,
-      stepsJson: journey.stepsJson,
-    });
-    console.log(`[PENDING] Stored run ${run.id} in pendingRuns (size: ${global.pendingRuns.size})`);
 
     return NextResponse.json({ run }, { status: 201 });
   } catch (error: any) {

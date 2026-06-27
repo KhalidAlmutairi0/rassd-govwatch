@@ -392,8 +392,8 @@ export default function ReportPage() {
     const parsed = JSON.parse(run.summaryJson);
     if (parsed.executive || parsed.executiveAr) {
       summary = {
-        executive: parsed.executive || null,
-        executiveAr: parsed.executiveAr || null,
+        executive: parsed.executive || undefined,
+        executiveAr: parsed.executiveAr || undefined,
         technicalDetails: parsed.technicalDetails,
         recommendations: parsed.recommendations,
       };
@@ -416,11 +416,11 @@ export default function ReportPage() {
       const strip = (s: string) => s.replace(/^(english\s+summary|executive\s+summary|arabic\s+summary|الملخص\s+العربي|الملخص\s+التنفيذي|العربية)\s*[:.]?\s*/gim, "").replace(/^\s*[-=]+\s*/gm, "").trim();
       if (splitIdx > 0) {
         summary = {
-          executive: strip(raw.slice(0, splitIdx)) || null,
-          executiveAr: strip(raw.slice(splitIdx)) || null,
+          executive: strip(raw.slice(0, splitIdx)) || undefined,
+          executiveAr: strip(raw.slice(splitIdx)) || undefined,
         };
       } else {
-        summary = { executive: raw.trim() || null };
+        summary = { executive: raw.trim() || undefined };
       }
     }
     if (!summary?.executive && !summary?.executiveAr) summary = null;

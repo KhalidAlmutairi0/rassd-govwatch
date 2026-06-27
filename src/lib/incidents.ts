@@ -1,8 +1,16 @@
 // src/lib/incidents.ts
 import { prisma } from "./prisma";
-import { StepResult } from "./executor";
 import { sendIncidentAlert, sendRecoveryAlert } from "./notifications";
 import { startEscalationTimer, resolveEscalationTimer } from "./escalation";
+
+export interface StepResult {
+  stepIndex?: number;
+  status: "passed" | "failed" | "skipped";
+  durationMs?: number;
+  screenshotPath?: string;
+  error?: string;
+  metadata?: any;
+}
 
 export async function processRunResult(
   runId: string,

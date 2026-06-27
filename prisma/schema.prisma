@@ -150,6 +150,8 @@ model Journey {
   site        Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
   runs        Run[]
   incidents   Incident[]
+
+  @@index([siteId, isDefault])
 }
 
 // ============================================
@@ -170,14 +172,20 @@ model Run {
   aiPageUnderstanding String?
   aiTestPlan          String?
   aiSummary           String?
+  contentHash         String?
   startedAt           DateTime  @default(now())
   finishedAt          DateTime?
+
+  @@index([siteId, contentHash, status, startedAt])
 
   site           Site      @relation(fields: [siteId], references: [id], onDelete: Cascade)
   journey        Journey   @relation(fields: [journeyId], references: [id], onDelete: Cascade)
   steps          RunStep[]
   artifacts      Artifact[]
   elementResults ElementTestResult[]
+
+  @@index([siteId, status, startedAt])
+  @@index([status, startedAt])
 }
 
 // ============================================
@@ -199,6 +207,8 @@ model RunStep {
   metadata       String?
 
   run            Run     @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
 }
 
 // ============================================
@@ -213,6 +223,8 @@ model Artifact {
   createdAt DateTime @default(now())
 
   run       Run    @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
 }
 
 // ============================================
@@ -243,6 +255,8 @@ model ElementTestResult {
   createdAt        DateTime @default(now())
 
   run              Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, createdAt])
 }
 
 // ============================================
@@ -264,6 +278,9 @@ model Incident {
   site             Site             @relation(fields: [siteId], references: [id], onDelete: Cascade)
   journey          Journey?         @relation(fields: [journeyId], references: [id])
   escalationTimer  EscalationTimer?
+
+  @@index([siteId, journeyId, status])
+  @@index([siteId, status, lastSeenAt])
 }
 
 // ============================================

@@ -91,7 +91,7 @@ export async function runMCPAgent(
     try {
       // Call Claude with tool use
       const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 2048,
         system: systemPrompt,
         messages,
