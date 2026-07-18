@@ -1,7 +1,7 @@
 // src/lib/auth.ts
 import { createHash, randomBytes, pbkdf2Sync } from "crypto";
 import { cookies } from "next/headers";
-import { prisma } from "./prisma";
+import { prisma } from "@/server/db/prisma";
 
 const SESSION_COOKIE = "rassd_session";
 const SESSION_DURATION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -14,6 +14,7 @@ export interface AuthUser {
   id: string;
   email: string;
   name: string | null;
+  nameAr: string | null;
   role: UserRole;
 }
 
@@ -71,6 +72,7 @@ export async function getSessionUser(token: string): Promise<AuthUser | null> {
     id: session.user.id,
     email: session.user.email,
     name: session.user.name,
+    nameAr: session.user.nameAr,
     role: session.user.role as UserRole,
   };
 }
@@ -152,7 +154,7 @@ export async function attemptLogin(email: string, password: string): Promise<Log
   return {
     success: true,
     token,
-    user: { id: user.id, email: user.email, name: user.name, role: user.role as UserRole },
+    user: { id: user.id, email: user.email, name: user.name, nameAr: user.nameAr, role: user.role as UserRole },
   };
 }
 

@@ -1,6 +1,6 @@
 // src/app/api/auth/reset-password/route.ts
 import { NextResponse } from "next/server";
-import { consumePasswordReset } from "@/lib/auth";
+import { consumePasswordReset } from "@/server/auth/auth";
 import { z } from "zod";
 
 const Schema = z.object({

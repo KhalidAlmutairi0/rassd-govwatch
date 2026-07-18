@@ -37,7 +37,7 @@ export async function getAccessibilityTree(page: Page): Promise<AccessibilityNod
         return buildNode(document.body, 0);
       })()
     `);
-    return snapshot;
+    return snapshot as AccessibilityNode | null;
   } catch (error) {
     console.error("Failed to get accessibility tree:", error);
     return null;
@@ -90,86 +90,3 @@ export function formatAccessibilityTree(tree: AccessibilityNode | null, depth = 
   return parts.join("\n");
 }
 
-/**
- * Extract interactive elements from accessibility tree
- * Returns a simplified list of clickable/interactive items
- */
-export function extractInteractiveElements(tree: AccessibilityNode | null): Array<{
-  role: string;
-  name: string;
-  path: string;
-}> {
-  const elements: Array<{ role: string; name: string; path: string }> = [];
-
-  const interactiveRoles = [
-    "button", "link", "menuitem", "tab", "checkbox", "radio",
-    "textbox", "searchbox", "combobox", "listbox", "option",
-    "switch", "slider", "spinbutton", "scrollbar"
-  ];
-
-  function traverse(node: AccessibilityNode | null, path: string = "") {
-    if (!node) return;
-
-    const currentPath = path ? `${path} > ${node.role}` : node.role;
-
-    if (interactiveRoles.includes(node.role) && node.name) {
-      elements.push({
-        role: node.role,
-        name: node.name,
-        path: currentPath
-      });
-    }
-
-    if (node.children) {
-      for (const child of node.children) {
-        traverse(child, currentPath);
-      }
-    }
-  }
-
-  traverse(tree);
-  return elements;
-}
-
-/**
- * Get element statistics from accessibility tree
- */
-export function getAccessibilityStats(tree: AccessibilityNode | null): {
-  totalElements: number;
-  byRole: Record<string, number>;
-  interactiveCount: number;
-  textElements: number;
-} {
-  const stats = {
-    totalElements: 0,
-    byRole: {} as Record<string, number>,
-    interactiveCount: 0,
-    textElements: 0
-  };
-
-  const interactiveRoles = ["button", "link", "menuitem", "tab", "textbox", "searchbox"];
-
-  function traverse(node: AccessibilityNode | null) {
-    if (!node) return;
-
-    stats.totalElements++;
-    stats.byRole[node.role] = (stats.byRole[node.role] || 0) + 1;
-
-    if (interactiveRoles.includes(node.role)) {
-      stats.interactiveCount++;
-    }
-
-    if (node.role === "text" || node.role === "StaticText") {
-      stats.textElements++;
-    }
-
-    if (node.children) {
-      for (const child of node.children) {
-        traverse(child);
-      }
-    }
-  }
-
-  traverse(tree);
-  return stats;
-}

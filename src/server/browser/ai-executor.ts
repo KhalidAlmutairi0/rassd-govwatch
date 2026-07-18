@@ -2,11 +2,12 @@
 // AI Execution Engine — Runs AI's test plan with Playwright
 
 import { Browser, Page, chromium, CDPSession } from "playwright";
-import { analyzePageAndCreatePlan, assessElementResult, generateFinalSummary, AgentTestPlan, AgentTestAction, AgentStepResult } from "./ai-agent";
-import { prisma } from "./prisma";
+import { analyzePageAndCreatePlan, assessElementResult, generateFinalSummary, tryConfidentAssessment, templateSummary, AgentTestPlan, AgentTestAction, AgentStepResult } from "@/server/ai/ai-agent";
+import { prisma } from "@/server/db/prisma";
 import { promises as fs } from "fs";
 import path from "path";
-import { getAccessibilityTree, formatAccessibilityTree } from "./accessibility-tree";
+import { createHash } from "crypto";
+import { getAccessibilityTree, formatAccessibilityTree } from "@/server/browser/accessibility-tree";
 
 
 function parseSummaryText(raw: string): {
@@ -90,6 +91,12 @@ interface ExecutorOptions {
   artifactsDir: string;
   maxElements?: number;
   timeoutPerElement?: number;
+  /**
+   * When false (scheduler), skips CDP screencast, cursor broadcasts and
+   * human-like jitter waits — nobody is watching so they're pure overhead.
+   * Defaults to true (live Quick Test / manual run).
+   */
+  liveView?: boolean;
   onProgress?: (event: ProgressEvent) => void;
   onBroadcast?: (msg: object) => void;  // Send WS messages to live viewers
 }
@@ -126,6 +133,7 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
     url, runId, siteId, artifactsDir,
     maxElements = 80,
     timeoutPerElement = 5000,
+    liveView = true,
     onProgress,
     onBroadcast,
   } = options;
@@ -142,6 +150,14 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
 
   const results: AgentStepResult[] = [];
   const consoleLogBuffer: Array<{ level: string; message: string; timestamp: number }> = [];
+  const unstableElements: Array<{
+    element: string;
+    type: string;
+    selector: string;
+    section: string;
+    page: string;
+    reason: string;
+  }> = [];
 
   try {
     // Ensure artifacts directory exists
@@ -191,19 +207,21 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
       });
     });
 
-    // ── Start CDP Screencast — streams live JPEG frames to the browser client ──
-    cdpSession = await page.context().newCDPSession(page);
-    await cdpSession.send("Page.startScreencast", {
-      format: "jpeg",
-      quality: 40,
-      maxWidth: 1280,
-      maxHeight: 720,
-      everyNthFrame: 2,
-    });
-    cdpSession.on("Page.screencastFrame", async ({ data, sessionId }: any) => {
-      send({ type: "browser-frame", image: `data:image/jpeg;base64,${data}` });
-      await cdpSession!.send("Page.screencastFrameAck", { sessionId }).catch(() => {});
-    });
+    // ── Start CDP Screencast only when a live viewer is attached ──
+    if (liveView) {
+      cdpSession = await page.context().newCDPSession(page);
+      await cdpSession.send("Page.startScreencast", {
+        format: "jpeg",
+        quality: 40,
+        maxWidth: 1280,
+        maxHeight: 720,
+        everyNthFrame: 2,
+      });
+      cdpSession.on("Page.screencastFrame", async ({ data, sessionId }: any) => {
+        send({ type: "browser-frame", image: `data:image/jpeg;base64,${data}` });
+        await cdpSession!.send("Page.screencastFrameAck", { sessionId }).catch(() => {});
+      });
+    }
 
     // Navigate to URL — use "commit" (first byte received) so we don't hang on slow SPAs
     console.log(`[BROWSER] Navigating to ${url}...`);
@@ -220,11 +238,12 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
       console.log(`[BROWSER] domcontentloaded timed out (continuing with partial load)`);
     });
     console.log(`[BROWSER] DOM ready`);
-    // Wait for SPA frameworks (Angular, React) to finish rendering
-    await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {
-      console.log(`[BROWSER] networkidle timed out (non-fatal)`);
+    // Wait for `load` (all subresources) — gov sites often have analytics that
+    // never let `networkidle` resolve, so we use `load` + a short fixed settle.
+    await page.waitForLoadState("load", { timeout: 8000 }).catch(() => {
+      console.log(`[BROWSER] load event timed out (non-fatal)`);
     });
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(1000);
     console.log(`[BROWSER] Page ready, proceeding with analysis`);
 
     // Dismiss cookie banners, splash screens, survey popups, and modal overlays
@@ -289,9 +308,10 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
       description: "Website loaded successfully"
     });
 
-    // Take full-page screenshot
-    const fullScreenshot = await page.screenshot({ fullPage: true });
-    const screenshotPath = path.join(artifactsDir, "full-page.png");
+    // Viewport screenshot (not full-page) — HTML + a11y tree already carry
+    // below-the-fold structure, and the vision call is much cheaper this way.
+    const fullScreenshot = await page.screenshot({ fullPage: false, type: "jpeg", quality: 70 });
+    const screenshotPath = path.join(artifactsDir, "full-page.jpg");
     await fs.writeFile(screenshotPath, fullScreenshot);
 
     // Extract simplified HTML structure (only interactive elements, capped for token efficiency)
@@ -354,6 +374,26 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
     const accessibilityTree = await getAccessibilityTree(page);
     const formattedAccessibilityTree = formatAccessibilityTree(accessibilityTree);
 
+    // Content-hash gate: skip AI analysis if a recent successful run for this site
+    // had byte-identical HTML + a11y tree (most gov homepages are static between runs).
+    const contentHash = createHash("sha256")
+      .update(htmlStructure)
+      .update(formattedAccessibilityTree)
+      .digest("hex");
+
+    const reuseCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const priorRun = await prisma.run.findFirst({
+      where: {
+        siteId,
+        contentHash,
+        status: "passed",
+        startedAt: { gte: reuseCutoff },
+        id: { not: runId },
+      },
+      orderBy: { startedAt: "desc" },
+      select: { aiPageUnderstanding: true, aiSummary: true },
+    });
+
     // ─────────────────────────────────────────
     // PHASE 2: AI Analyzes & Creates Test Plan
     // ─────────────────────────────────────────
@@ -361,47 +401,55 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
       type: "analysis",
       phase: "analysis",
       status: "running",
-      description: "🧠 AI is analyzing the page and creating a test plan..."
+      description: priorRun
+        ? "♻️ Page unchanged since last healthy run — reusing prior analysis..."
+        : "🧠 AI is analyzing the page and creating a test plan..."
     });
 
     // Extract real DOM elements as a selector fallback map
     const realElements = await extractRealPageElements(page, maxElements + 20);
     console.log(`[DOM] Extracted ${realElements.length} real elements for selector fallback`);
 
-    // AI analyzes page for understanding + real DOM elements for testing
-    console.log(`[AI] Sending page data to AI for page understanding...`);
     let testPlan: AgentTestPlan;
-    try {
-      const aiPlan = await analyzePageAndCreatePlan(fullScreenshot, htmlStructure, url, metadata, formattedAccessibilityTree);
-      console.log(`[AI] Page understanding: ${aiPlan.pageUnderstanding.siteName} (${aiPlan.elements.length} AI elements)`);
-
-      // Use AI's page understanding but real DOM elements for testing
-      // Real DOM selectors are guaranteed to work — AI selectors often don't match
+    if (priorRun?.aiPageUnderstanding) {
+      console.log(`[CACHE] Content hash matched prior healthy run — skipping page-analysis AI call`);
       testPlan = {
-        pageUnderstanding: aiPlan.pageUnderstanding,
+        pageUnderstanding: JSON.parse(priorRun.aiPageUnderstanding),
         elements: realElements,
       };
-    } catch (err) {
-      console.log(`[AI] AI analysis failed, using DOM-extracted elements: ${err}`);
-      testPlan = {
-        pageUnderstanding: {
-          siteName: metadata.title,
-          siteNameAr: "",
-          pageType: "homepage",
-          language: metadata.lang || "unknown",
-          description: `Automated test for ${metadata.title}`,
-          descriptionAr: `اختبار آلي لـ ${metadata.title}`,
-        },
-        elements: realElements,
-      };
+    } else {
+      // AI analyzes page for understanding + real DOM elements for testing
+      console.log(`[AI] Sending page data to AI for page understanding...`);
+      try {
+        const aiPlan = await analyzePageAndCreatePlan(fullScreenshot, htmlStructure, url, metadata, formattedAccessibilityTree);
+        console.log(`[AI] Page understanding: ${aiPlan.pageUnderstanding.siteName} (${aiPlan.elements.length} AI elements)`);
+        testPlan = {
+          pageUnderstanding: aiPlan.pageUnderstanding,
+          elements: realElements,
+        };
+      } catch (err) {
+        console.log(`[AI] AI analysis failed, using DOM-extracted elements: ${err}`);
+        testPlan = {
+          pageUnderstanding: {
+            siteName: metadata.title,
+            siteNameAr: "",
+            pageType: "homepage",
+            language: metadata.lang || "unknown",
+            description: `Automated test for ${metadata.title}`,
+            descriptionAr: `اختبار آلي لـ ${metadata.title}`,
+          },
+          elements: realElements,
+        };
+      }
     }
 
-    // Store AI understanding in database
+    // Store AI understanding + content hash in database
     await prisma.run.update({
       where: { id: runId },
       data: {
         aiPageUnderstanding: JSON.stringify(testPlan.pageUnderstanding),
         aiTestPlan: JSON.stringify(testPlan.elements.slice(0, 30)),
+        contentHash,
       },
     });
 
@@ -502,7 +550,7 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
         // Only navigate back to homepage if previous test navigated away
         if (needsHomepageReload) {
           await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15000 });
-          await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+          await page.waitForLoadState("load", { timeout: 4000 }).catch(() => {});
           await page.waitForTimeout(1500);
           // Dismiss popups
           try {
@@ -526,27 +574,38 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
         // If not found and we're not on homepage, go back and retry
         if (!element && page.url() !== url) {
           await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15000 });
-          await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+          await page.waitForLoadState("load", { timeout: 4000 }).catch(() => {});
           await page.waitForTimeout(1500);
           element = await findElement(page, testAction);
           needsHomepageReload = false;
         }
 
         if (!element) {
-          // Scroll down a bit so live view shows movement even when elements aren't found
-          await page.evaluate((step) => window.scrollBy(0, 200 + step * 100), stepNum).catch(() => {});
-          await page.waitForTimeout(300);
+          // Don't pollute results with locator misses — log to unstable_elements.json
+          // and mark as skipped so it doesn't inflate the warning count.
+          unstableElements.push({
+            element: testAction.element,
+            type: testAction.type,
+            selector: testAction.selector,
+            section: testAction.section,
+            page: page.url(),
+            reason: "Locator did not match a visible element",
+          });
 
           let notFoundPath = "";
-          try {
-            notFoundPath = path.join(artifactsDir, `element-${stepNum}-after.png`);
-            const shot = await page.screenshot({ timeout: 3000 });
-            await fs.writeFile(notFoundPath, shot);
-          } catch { notFoundPath = ""; }
+          if (liveView) {
+            // Scroll a bit so the live viewer sees some movement even on a miss
+            await page.evaluate((step) => window.scrollBy(0, 200 + step * 100), stepNum).catch(() => {});
+            try {
+              notFoundPath = path.join(artifactsDir, `element-${stepNum}-after.jpg`);
+              const shot = await page.screenshot({ timeout: 3000, type: "jpeg", quality: 60 });
+              await fs.writeFile(notFoundPath, shot);
+            } catch { notFoundPath = ""; }
+          }
 
           const result: AgentStepResult = {
             testAction,
-            status: "warning",
+            status: "skipped",
             actualBehavior: "Element not found on page",
             aiAssessment: "Could not locate this element. It may be hidden, dynamically loaded, or the selector may be incorrect.",
             responseTimeMs: 0,
@@ -569,7 +628,7 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
               elementSelector: testAction.selector,
               parentSection: testAction.section,
               action: testAction.action,
-              status: "warning",
+              status: "skipped",
               responseTimeMs: 0,
               error: `Selector not found or element not interactable. ${result.actualBehavior || ''} ${result.aiAssessment || ''}`.trim(),
               screenshotAfter: notFoundPath || undefined,
@@ -580,7 +639,7 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
             type: "testing",
             phase: "testing",
             status: "warning",
-            description: `${testAction.element}: Element not found`,
+            description: `${testAction.element}: skipped (locator missed)`,
             currentStep: stepNum,
             totalSteps: safeElements.length + subPageQueue.length,
             elementType: testAction.type,
@@ -592,24 +651,25 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
 
         // Scroll element into view so screenshot shows it
         await element.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
-        await page.waitForTimeout(200);
 
-        const box = await element.boundingBox();
-        const cursorX = box ? jitter(Math.round(box.x + box.width / 2)) : 0;
-        const cursorY = box ? jitter(Math.round(box.y + box.height / 2)) : 0;
-
-        send({
-          type: "cursor_move",
-          data: { x: cursorX, y: cursorY, elementText: testAction.element, elementType: testAction.type },
-        });
-
-        await page.waitForTimeout(150);
+        let cursorX = 0;
+        let cursorY = 0;
+        if (liveView) {
+          const box = await element.boundingBox();
+          cursorX = box ? jitter(Math.round(box.x + box.width / 2)) : 0;
+          cursorY = box ? jitter(Math.round(box.y + box.height / 2)) : 0;
+          send({
+            type: "cursor_move",
+            data: { x: cursorX, y: cursorY, elementText: testAction.element, elementType: testAction.type },
+          });
+          await page.waitForTimeout(150);
+        }
 
         // Screenshot BEFORE — wrapped in try/catch in case page is mid-load
         let beforeScreenshot: Buffer = Buffer.alloc(0);
-        const beforePath = path.join(artifactsDir, `element-${stepNum}-before.png`);
+        const beforePath = path.join(artifactsDir, `element-${stepNum}-before.jpg`);
         try {
-          beforeScreenshot = await page.screenshot({ timeout: 5000 });
+          beforeScreenshot = await page.screenshot({ timeout: 5000, type: "jpeg", quality: 60 });
           await fs.writeFile(beforePath, beforeScreenshot);
         } catch { /* page may be loading — skip */ }
 
@@ -617,8 +677,8 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
         const urlBefore = page.url();
         const consoleErrorsCount = consoleLogBuffer.filter(l => l.level === "error").length;
 
-        // Broadcast click event
-        send({ type: "cursor_click", data: { x: cursorX, y: cursorY } });
+        // Broadcast click event (live view only)
+        if (liveView) send({ type: "cursor_click", data: { x: cursorX, y: cursorY } });
 
         // Perform the action — human-like
         const startTime = Date.now();
@@ -634,18 +694,16 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
             break;
           case "hover":
             await element.hover({ timeout: timeoutPerElement });
-            await page.waitForTimeout(200);
             break;
           case "type": {
             await element.click({ timeout: timeoutPerElement });
-            await page.waitForTimeout(150);
             const searchTerm = testAction.element.toLowerCase().includes("search") ? "خدمات" : "test";
-            await page.keyboard.type(searchTerm, { delay: 80 + Math.round(Math.random() * 40) });
+            // Human-like per-keystroke delay only when a viewer is watching
+            await page.keyboard.type(searchTerm, liveView ? { delay: 80 + Math.round(Math.random() * 40) } : undefined);
             break;
           }
           case "select":
             await page.mouse.down();
-            await page.waitForTimeout(60);
             await page.mouse.up();
             break;
         }
@@ -658,16 +716,16 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
           page.waitForTimeout(1000),
         ]).catch(() => {});
 
-        // Human-like pause after action
-        await page.waitForTimeout(300 + Math.round(Math.random() * 150));
+        // Human-like pause after action (live view only — for the visual cadence)
+        if (liveView) await page.waitForTimeout(300 + Math.round(Math.random() * 150));
 
 
 
         // Screenshot AFTER — wrapped in try/catch in case page navigated away
         let afterScreenshot: Buffer = beforeScreenshot;
-        const afterPath = path.join(artifactsDir, `element-${stepNum}-after.png`);
+        const afterPath = path.join(artifactsDir, `element-${stepNum}-after.jpg`);
         try {
-          afterScreenshot = await page.screenshot({ timeout: 5000 });
+          afterScreenshot = await page.screenshot({ timeout: 5000, type: "jpeg", quality: 60 });
           await fs.writeFile(afterPath, afterScreenshot);
         } catch {
           // If screenshot fails (e.g. page is navigating), reuse before screenshot
@@ -705,8 +763,8 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
           });
         const pageTitle = await page.title();
 
-        // AI assesses the result (compare before/after screenshots)
-        const assessment = await assessElementResult(testAction, beforeScreenshot, afterScreenshot, {
+        // Heuristic-first: skip vision when result is unambiguous (the common case).
+        const assessmentContext = {
           urlChanged: urlBefore !== urlAfter,
           urlBefore,
           urlAfter,
@@ -714,7 +772,10 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
           networkErrors: [],
           responseTimeMs,
           pageTitle,
-        });
+        };
+        const assessment =
+          tryConfidentAssessment(testAction, assessmentContext) ??
+          (await assessElementResult(testAction, beforeScreenshot, afterScreenshot, assessmentContext));
 
         const result: AgentStepResult = {
           testAction,
@@ -803,8 +864,8 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
         let failCursorX = 0;
         let failCursorY = 0;
         try {
-          failAfterPath = path.join(artifactsDir, `element-${stepNum}-after.png`);
-          const failShot = await page.screenshot({ timeout: 3000 });
+          failAfterPath = path.join(artifactsDir, `element-${stepNum}-after.jpg`);
+          const failShot = await page.screenshot({ timeout: 3000, type: "jpeg", quality: 60 });
           await fs.writeFile(failAfterPath, failShot);
           // element is out of scope in catch — use page center as fallback cursor
           failCursorX = 640;
@@ -877,7 +938,7 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
         });
 
         await page.goto(subPageUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
-        await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+        await page.waitForLoadState("load", { timeout: 4000 }).catch(() => {});
         await page.waitForTimeout(1500);
 
         // Dismiss cookie/popup/splash banners on sub-page
@@ -953,19 +1014,30 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
             // Navigate back to sub-page if we drifted
             if (page.url() !== subPageUrl) {
               await page.goto(subPageUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
-              await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
+              await page.waitForLoadState("load", { timeout: 4000 }).catch(() => {});
               await page.waitForTimeout(500);
             }
 
             const element = await findElement(page, testAction);
             if (!element) {
+              unstableElements.push({
+                element: testAction.element,
+                type: testAction.type,
+                selector: testAction.selector,
+                section: testAction.section,
+                page: subPageUrl,
+                reason: "Locator did not match on sub-page",
+              });
+
               let nfPath = "";
-              try {
-                nfPath = path.join(artifactsDir, `element-${stepNum}-after.png`);
-                await fs.writeFile(nfPath, await page.screenshot({ timeout: 3000 }));
-              } catch { nfPath = ""; }
+              if (liveView) {
+                try {
+                  nfPath = path.join(artifactsDir, `element-${stepNum}-after.jpg`);
+                  await fs.writeFile(nfPath, await page.screenshot({ timeout: 3000, type: "jpeg", quality: 60 }));
+                } catch { nfPath = ""; }
+              }
               results.push({
-                testAction, status: "warning", actualBehavior: "Element not found on sub-page",
+                testAction, status: "skipped", actualBehavior: "Element not found on sub-page",
                 aiAssessment: "Could not locate element on sub-page.",
                 responseTimeMs: 0, screenshotBefore: "", screenshotAfter: nfPath,
                 urlChanged: false, urlBefore: subPageUrl, urlAfter: subPageUrl,
@@ -975,14 +1047,14 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
                 data: {
                   runId, elementText: testAction.element, elementType: testAction.type,
                   elementSelector: testAction.selector, parentSection: testAction.section,
-                  action: testAction.action, status: "warning", responseTimeMs: 0,
+                  action: testAction.action, status: "skipped", responseTimeMs: 0,
                   error: "Selector not found on sub-page",
                   screenshotAfter: nfPath || undefined,
                 },
               });
               emit({
                 type: "testing", phase: "testing", status: "warning",
-                description: `${testAction.element}: Not found on sub-page`,
+                description: `${testAction.element}: skipped (locator missed)`,
                 currentStep: stepNum, totalSteps: safeElements.length + subPageQueue.length * 5,
                 elementType: testAction.type, responseTimeMs: 0,
               });
@@ -990,21 +1062,24 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
             }
 
             await element.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
-            await page.waitForTimeout(200);
 
-            const box = await element.boundingBox();
-            const cx = box ? jitter(Math.round(box.x + box.width / 2)) : 0;
-            const cy = box ? jitter(Math.round(box.y + box.height / 2)) : 0;
-            send({ type: "cursor_move", data: { x: cx, y: cy, elementText: testAction.element, elementType: testAction.type } });
-            await page.waitForTimeout(150);
+            let cx = 0;
+            let cy = 0;
+            if (liveView) {
+              const box = await element.boundingBox();
+              cx = box ? jitter(Math.round(box.x + box.width / 2)) : 0;
+              cy = box ? jitter(Math.round(box.y + box.height / 2)) : 0;
+              send({ type: "cursor_move", data: { x: cx, y: cy, elementText: testAction.element, elementType: testAction.type } });
+              await page.waitForTimeout(150);
+            }
 
             let beforeBuf: Buffer = Buffer.alloc(0);
-            const bPath = path.join(artifactsDir, `element-${stepNum}-before.png`);
-            try { beforeBuf = await page.screenshot({ timeout: 5000 }); await fs.writeFile(bPath, beforeBuf); } catch {}
+            const bPath = path.join(artifactsDir, `element-${stepNum}-before.jpg`);
+            try { beforeBuf = await page.screenshot({ timeout: 5000, type: "jpeg", quality: 60 }); await fs.writeFile(bPath, beforeBuf); } catch {}
 
             const urlB = page.url();
             const errCount = consoleLogBuffer.filter(l => l.level === "error").length;
-            send({ type: "cursor_click", data: { x: cx, y: cy } });
+            if (liveView) send({ type: "cursor_click", data: { x: cx, y: cy } });
 
             const t0 = Date.now();
             try { await element.click({ timeout: timeoutPerElement }); } catch { await page.mouse.click(cx, cy); }
@@ -1014,20 +1089,23 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
               page.waitForLoadState("domcontentloaded", { timeout: 5000 }),
               page.waitForTimeout(1000),
             ]).catch(() => {});
-            await page.waitForTimeout(300);
+            if (liveView) await page.waitForTimeout(300);
 
             let afterBuf = beforeBuf;
-            const aPath = path.join(artifactsDir, `element-${stepNum}-after.png`);
-            try { afterBuf = await page.screenshot({ timeout: 5000 }); await fs.writeFile(aPath, afterBuf); } catch {}
+            const aPath = path.join(artifactsDir, `element-${stepNum}-after.jpg`);
+            try { afterBuf = await page.screenshot({ timeout: 5000, type: "jpeg", quality: 60 }); await fs.writeFile(aPath, afterBuf); } catch {}
 
             const urlA = page.url();
             const newErrors = consoleLogBuffer.filter(l => l.level === "error").slice(errCount).map(l => l.message);
             const pTitle = await page.title();
 
-            const assess = await assessElementResult(testAction, beforeBuf, afterBuf, {
+            const assessCtx = {
               urlChanged: urlB !== urlA, urlBefore: urlB, urlAfter: urlA,
               consoleErrors: newErrors, networkErrors: [], responseTimeMs: rTime, pageTitle: pTitle,
-            });
+            };
+            const assess =
+              tryConfidentAssessment(testAction, assessCtx) ??
+              (await assessElementResult(testAction, beforeBuf, afterBuf, assessCtx));
 
             results.push({
               testAction, status: assess.status as any, actualBehavior: assess.assessment,
@@ -1061,8 +1139,8 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
             const errMsg = error.message || "";
             let subFailPath = "";
             try {
-              subFailPath = path.join(artifactsDir, `element-${stepNum}-after.png`);
-              await fs.writeFile(subFailPath, await page.screenshot({ timeout: 3000 }));
+              subFailPath = path.join(artifactsDir, `element-${stepNum}-after.jpg`);
+              await fs.writeFile(subFailPath, await page.screenshot({ timeout: 3000, type: "jpeg", quality: 60 }));
             } catch { subFailPath = ""; }
             results.push({
               testAction, status: "warning", actualBehavior: errMsg,
@@ -1106,11 +1184,23 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
     });
 
     const totalDuration = results.reduce((sum, r) => sum + r.responseTimeMs, 0);
-    const summary = await generateFinalSummary(
-      testPlan.pageUnderstanding,
-      results,
-      totalDuration
-    );
+    const failedCount = results.filter(r => r.status === "failed").length;
+    const warningCount = results.filter(r => r.status === "warning").length;
+
+    // Skip the AI summary call when there's nothing interesting to explain.
+    // If the page hash matched a recent healthy run AND this run is also clean,
+    // we can even reuse the cached prior summary verbatim.
+    let summary: string;
+    if (failedCount === 0 && warningCount === 0) {
+      summary = priorRun?.aiSummary
+        ?? templateSummary(testPlan.pageUnderstanding, results, totalDuration);
+    } else {
+      summary = await generateFinalSummary(
+        testPlan.pageUnderstanding,
+        results,
+        totalDuration
+      );
+    }
 
     // Parse the plain-text AI response into structured fields
     const structuredSummary = parseSummaryText(summary);
@@ -1133,23 +1223,27 @@ export async function executeAITest(options: ExecutorOptions): Promise<ExecutorR
     });
 
     // Determine overall status
-    const failed = results.filter(r => r.status === "failed").length;
-    const warnings = results.filter(r => r.status === "warning").length;
-    const overallStatus = failed > 0 ? "failed" : warnings > 0 ? "warning" : "passed";
+    const overallStatus = failedCount > 0 ? "failed" : warningCount > 0 ? "warning" : "passed";
 
     emit({
       type: "complete",
       phase: "complete",
       status: "completed",
-      description: `Test complete: ${results.length} elements tested, ${failed} failed, ${warnings} warnings`,
+      description: `Test complete: ${results.length} elements tested, ${failedCount} failed, ${warningCount} warnings`,
       data: {
         overallStatus,
         totalDuration,
         passed: results.filter(r => r.status === "passed").length,
-        failed,
-        warnings,
+        failed: failedCount,
+        warnings: warningCount,
       },
     });
+
+    // Dump the flaky locator log so we can triage stable selectors over time.
+    if (unstableElements.length > 0) {
+      const unstablePath = path.join(artifactsDir, "unstable_elements.json");
+      await fs.writeFile(unstablePath, JSON.stringify(unstableElements, null, 2)).catch(() => {});
+    }
 
     return {
       testPlan,
@@ -1326,108 +1420,102 @@ async function extractRealPageElements(page: Page, maxElements: number): Promise
 }
 
 // ─────────────────────────────────────────
-// Helper: Find element using selector
+// Helper: Find element — semantic locators first, selector strings last
 // ─────────────────────────────────────────
+const ROLE_MAP: Record<string, string> = {
+  "button": "button",
+  "nav-link": "link",
+  "link": "link",
+  "cta": "link",
+  "tab": "tab",
+  "menu-item": "menuitem",
+  "form-input": "textbox",
+  "search": "searchbox",
+  "dropdown": "combobox",
+};
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function cleanElementName(raw: string): string {
+  return raw
+    .replace(/^(Navigation link|Button|Tab|Link|Dropdown|Menu item|Search|Form|Input)\s*['"]?/i, "")
+    .replace(/['"]?\s*$/, "")
+    .trim();
+}
+
 async function findElement(page: Page, testAction: AgentTestAction) {
-  // 0. Try real DOM selector (extracted from live page, guaranteed to work)
-  const domSelector = (testAction as any)._domSelector;
-  if (domSelector) {
+  const role = ROLE_MAP[testAction.type];
+  const name = cleanElementName(testAction.element);
+  const nameRe = name && name.length > 1 ? new RegExp(escapeRegex(name.slice(0, 30)), "i") : null;
+
+  // 1) Semantic: role + accessible name
+  if (role && nameRe) {
     try {
-      const el = await page.locator(domSelector).first();
-      if (await el.isVisible({ timeout: 2000 })) return el;
+      const el = page.getByRole(role as any, { name: nameRe }).first();
+      if (await el.isVisible({ timeout: 1000 })) return el;
     } catch {}
   }
 
-  // 1. Try the AI's suggested selector
-  try {
-    const el = await page.locator(testAction.selector).first();
-    if (await el.isVisible({ timeout: 2000 })) return el;
-  } catch {}
+  // 2) Semantic: getByLabel (form fields)
+  if (nameRe && (role === "textbox" || role === "searchbox" || role === "combobox")) {
+    try {
+      const el = page.getByLabel(nameRe).first();
+      if (await el.isVisible({ timeout: 800 })) return el;
+    } catch {}
+  }
 
-  // 2. Try finding by exact text content
-  try {
-    const textToFind = testAction.element
-      .replace(/^(Navigation link|Button|Tab|Link|Dropdown|Menu item|Search|Form|Input)\s*['"]?/i, "")
-      .replace(/['"]?\s*$/, "")
-      .trim();
-    if (textToFind && textToFind.length > 1) {
-      const el = page.getByText(textToFind, { exact: false }).first();
-      if (await el.isVisible({ timeout: 2000 })) return el;
-    }
-  } catch {}
+  // 3) Semantic: exact text
+  if (name && name.length > 1) {
+    try {
+      const el = page.getByText(name, { exact: true }).first();
+      if (await el.isVisible({ timeout: 800 })) return el;
+    } catch {}
+  }
 
-  // 3. Try role + name
-  try {
-    const roleMap: Record<string, string> = {
-      "button": "button",
-      "nav-link": "link",
-      "link": "link",
-      "tab": "tab",
-      "menu-item": "menuitem",
-      "form-input": "textbox",
-    };
-    const role = roleMap[testAction.type];
-    if (role) {
-      const el = page.getByRole(role as any, {
-        name: new RegExp(testAction.element.slice(0, 30), "i")
-      }).first();
-      if (await el.isVisible({ timeout: 2000 })) return el;
-    }
-  } catch {}
+  // 4) DOM-extracted selector (id/href/aria-label/name from extractRealPageElements)
+  if (testAction.selector) {
+    try {
+      const el = page.locator(testAction.selector).first();
+      if (await el.isVisible({ timeout: 1000 })) return el;
+    } catch {}
+  }
 
-  // 4. Try extracting href pattern from selector and matching loosely
+  // 5) Loose text match (substring)
+  if (nameRe) {
+    try {
+      const el = page.getByText(nameRe).first();
+      if (await el.isVisible({ timeout: 800 })) return el;
+    } catch {}
+  }
+
+  // 6) href pattern fallback (extract from selector string)
   try {
     const hrefMatch = testAction.selector.match(/href[*~^$]?=['"]([^'"]+)['"]/);
     if (hrefMatch) {
       const hrefPart = hrefMatch[1].split("/").pop() || hrefMatch[1];
       const el = page.locator(`a[href*="${hrefPart}"]`).first();
-      if (await el.isVisible({ timeout: 2000 })) return el;
+      if (await el.isVisible({ timeout: 800 })) return el;
     }
   } catch {}
 
-  // 5. Try simplified selector (just tag + class)
-  try {
-    const classMatch = testAction.selector.match(/([a-z]+)\.([a-z0-9_-]+)/i);
-    if (classMatch) {
-      const el = page.locator(`${classMatch[1]}.${classMatch[2]}`).first();
-      if (await el.isVisible({ timeout: 2000 })) return el;
-    }
-  } catch {}
+  // 7) aria-label substring match
+  if (name && name.length > 1) {
+    try {
+      const el = page.locator(`[aria-label*="${name.slice(0, 30)}" i]`).first();
+      if (await el.isVisible({ timeout: 800 })) return el;
+    } catch {}
+  }
 
-  // 6. Try aria-label matching
-  try {
-    const name = testAction.element.replace(/^(Navigation link|Button|Tab|Link)\s*/i, "").trim();
-    if (name.length > 1) {
-      const el = page.locator(`[aria-label*="${name}" i]`).first();
-      if (await el.isVisible({ timeout: 1500 })) return el;
-    }
-  } catch {}
-
-  // 7. Generic: find any visible link/button containing the key word
-  try {
-    const words = testAction.element.split(/\s+/).filter(w => w.length > 3);
-    for (const word of words) {
-      const el = page.locator(`a:visible, button:visible`).filter({ hasText: new RegExp(word, "i") }).first();
-      if (await el.isVisible({ timeout: 1000 })) return el;
-    }
-  } catch {}
-
-  // 8. Last resort: scroll down and try selector again (element might be below fold)
-  try {
-    await page.evaluate(() => window.scrollBy(0, 400));
-    await page.waitForTimeout(300);
-    const el = await page.locator(testAction.selector).first();
-    if (await el.isVisible({ timeout: 1500 })) return el;
-  } catch {}
-
-  // 9. Try text search after scroll
-  try {
-    const text = testAction.element.replace(/^(a|button|input)\s+element$/i, '').trim();
-    if (text && text.length > 1) {
-      const el = page.getByText(text, { exact: true }).first();
-      if (await el.isVisible({ timeout: 1000 })) return el;
-    }
-  } catch {}
+  // 8) Last resort: scroll + retry selector (element may be below fold)
+  if (testAction.selector) {
+    try {
+      await page.evaluate(() => window.scrollBy(0, 400));
+      const el = page.locator(testAction.selector).first();
+      if (await el.isVisible({ timeout: 800 })) return el;
+    } catch {}
+  }
 
   return null;
 }

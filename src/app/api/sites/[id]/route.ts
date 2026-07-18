@@ -1,6 +1,6 @@
 // src/app/api/sites/[id]/route.ts
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { prisma } from "@/server/db/prisma";
 
 // GET /api/sites/[id] - Get single site with details
 export async function GET(

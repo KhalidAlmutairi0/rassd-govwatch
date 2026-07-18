@@ -1,7 +1,7 @@
 // src/lib/escalation.ts
 // Persistent escalation timer logic — DB-backed so it survives server restarts
-import { prisma } from "./prisma";
-import { sendEmailNotification, sendSlackNotification } from "./notifications";
+import { prisma } from "@/server/db/prisma";
+import { sendEmailNotification, sendSlackNotification } from "@/server/notifications/notifications";
 
 const LEVEL_2_THRESHOLD_MS = 15 * 60 * 1000;  // 15 minutes → manager
 const LEVEL_3_THRESHOLD_MS = 45 * 60 * 1000;  // 45 minutes → CTO + SMS

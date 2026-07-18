@@ -1,8 +1,8 @@
 // src/app/api/gov/dashboard/route.ts
 // Governor executive dashboard data — NO technical content exposed
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/auth";
+import { prisma } from "@/server/db/prisma";
+import { getCurrentUser } from "@/server/auth/auth";
 
 function toRagStatus(status: string): "green" | "yellow" | "red" | "unknown" {
   if (status === "healthy") return "green";

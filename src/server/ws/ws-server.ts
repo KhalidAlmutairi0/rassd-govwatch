@@ -2,7 +2,7 @@
 // On Vercel: uses Ably for real-time broadcasting (no persistent WS server)
 // Locally: uses a WebSocket server on a separate port
 
-import { ablyBroadcast, isAblyEnabled } from "./ably-broadcast";
+import { ablyBroadcast, isAblyEnabled } from "@/server/notifications/ably-broadcast";
 
 const IS_VERCEL = !!process.env.VERCEL;
 

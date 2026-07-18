@@ -1,9 +1,9 @@
 // src/app/api/gov/portfolio-health/route.ts
 // Powers Screen 2 — Portfolio Health (overall score, grade, sparkline, improved/declined/stable)
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/auth";
-import { computeSiteScores, getGrade, getScoreHistory } from "@/lib/scoring";
+import { prisma } from "@/server/db/prisma";
+import { getCurrentUser } from "@/server/auth/auth";
+import { computeSiteScores, getGrade, getScoreHistory } from "@/server/db/scoring";
 
 export async function GET() {
   try {

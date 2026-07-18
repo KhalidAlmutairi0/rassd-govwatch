@@ -1,9 +1,9 @@
 // src/app/api/sites/route.ts
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { CreateSiteSchema } from "@/lib/validators";
+import { prisma } from "@/server/db/prisma";
+import { CreateSiteSchema } from "@/server/shared/validators";
 // Lazy-init WebSocket server (dynamic import prevents middleware bundle bleed)
-import("@/lib/init-ws").then(m => m.ensureWebSocketServer?.()).catch(() => {});
+import("@/server/ws/init-ws").then(m => m.ensureWebSocketServer?.()).catch(() => {});
 
 // GET /api/sites - List all sites
 export async function GET() {
@@ -85,6 +85,7 @@ export async function POST(request: Request) {
     }
 
     // 4. Create a run record in "queued" state so the live page can start it
+    // via /api/runs/[runId]/start (which re-reads site + journey by runId).
     const run = await prisma.run.create({
       data: {
         siteId: site.id,
@@ -92,15 +93,6 @@ export async function POST(request: Request) {
         status: "queued",
         triggeredBy: "manual",
       },
-    });
-
-    // Store in pendingRuns so /api/runs/[runId]/start can pick it up
-    global.pendingRuns = global.pendingRuns || new Map();
-    global.pendingRuns.set(run.id, {
-      siteId: site.id,
-      baseUrl: site.baseUrl,
-      journeyId: journey.id,
-      stepsJson: journey.stepsJson,
     });
 
     return NextResponse.json({ site, run }, { status: 201 });

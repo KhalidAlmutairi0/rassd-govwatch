@@ -1,7 +1,7 @@
 // src/app/api/auth/logout/route.ts
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { deleteSession, SESSION_COOKIE } from "@/lib/auth";
+import { deleteSession, SESSION_COOKIE } from "@/server/auth/auth";
 
 export async function POST() {
   try {

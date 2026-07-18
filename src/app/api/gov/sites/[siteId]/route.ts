@@ -1,9 +1,9 @@
 // src/app/api/gov/sites/[siteId]/route.ts
 // Powers Screen 5 — Site Detail (scores, executive summary, top issues)
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/auth";
-import { getLatestScore, getGrade, getScoreColor, getScoreHistory } from "@/lib/scoring";
+import { prisma } from "@/server/db/prisma";
+import { getCurrentUser } from "@/server/auth/auth";
+import { getLatestScore, getGrade, getScoreColor, getScoreHistory } from "@/server/db/scoring";
 
 export async function GET(
   request: NextRequest,

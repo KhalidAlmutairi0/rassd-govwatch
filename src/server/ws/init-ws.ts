@@ -1,6 +1,6 @@
 // src/lib/init-ws.ts
 // Initialize WebSocket server for live browser streaming
-import { initWebSocketServer } from "./ws-server";
+import { initWebSocketServer } from "@/server/ws/ws-server";
 
 let initialized = false;
 

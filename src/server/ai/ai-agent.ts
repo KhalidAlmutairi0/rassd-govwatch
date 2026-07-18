@@ -1,7 +1,6 @@
 // src/lib/ai-agent.ts
 // THE AI AGENT — The brain that understands pages and decides what to test
 
-import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 
 // ============================================================
@@ -342,7 +341,7 @@ Arabic Summary
 }
 
 // ============================================================
-// AI Provider Abstraction (supports Claude + OpenAI)
+// AI Provider Abstraction — OpenAI primary, Groq text-only fallback
 // ============================================================
 
 async function callAIWithVision(
@@ -350,32 +349,6 @@ async function callAIWithVision(
   ...screenshots: Buffer[]
 ): Promise<string> {
   const provider = detectProvider();
-
-  if (provider === "claude") {
-    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-    const content: any[] = [];
-
-    // Add screenshots as images
-    for (const screenshot of screenshots) {
-      content.push({
-        type: "image",
-        source: {
-          type: "base64",
-          media_type: "image/png",
-          data: screenshot.toString("base64"),
-        },
-      });
-    }
-    content.push({ type: "text", text: prompt });
-
-    const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 4096,
-      messages: [{ role: "user", content }],
-    });
-
-    return extractJSON(response.content[0].type === "text" ? response.content[0].text : "");
-  }
 
   if (provider === "openai") {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -385,7 +358,7 @@ async function callAIWithVision(
       content.push({
         type: "image_url",
         image_url: {
-          url: `data:image/png;base64,${screenshot.toString("base64")}`,
+          url: `data:image/jpeg;base64,${screenshot.toString("base64")}`,
           detail: "high",
         },
       });
@@ -402,7 +375,7 @@ async function callAIWithVision(
   }
 
   if (provider === "groq") {
-    // Groq doesn't support vision — use text-only prompt
+    // Groq doesn't support vision — fall back to a text-only prompt
     const groq = new OpenAI({
       apiKey: process.env.GROQ_API_KEY,
       baseURL: "https://api.groq.com/openai/v1",
@@ -417,28 +390,16 @@ async function callAIWithVision(
     return extractJSON(response.choices[0].message.content || "");
   }
 
-  // Fallback: no AI — return empty JSON for fallback handling
   return "{}";
 }
 
 async function callAI(prompt: string): Promise<string> {
   const provider = detectProvider();
 
-  if (provider === "claude") {
-    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-    const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 2048,
-      messages: [{ role: "user", content: prompt }],
-    });
-
-    return response.content[0].type === "text" ? response.content[0].text : "";
-  }
-
   if (provider === "openai") {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+    // Text-only — route to the cheaper 4o-mini. Vision stays on gpt-4o.
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       max_tokens: 2048,
@@ -466,8 +427,7 @@ async function callAI(prompt: string): Promise<string> {
   return "";
 }
 
-function detectProvider(): "claude" | "openai" | "groq" | "none" {
-  if (process.env.ANTHROPIC_API_KEY) return "claude";
+function detectProvider(): "openai" | "groq" | "none" {
   if (process.env.OPENAI_API_KEY) return "openai";
   if (process.env.GROQ_API_KEY) return "groq";
   return "none";
@@ -607,6 +567,104 @@ function fallbackAnalysis(
   return { pageUnderstanding, elements };
 }
 
+// ============================================================
+// Heuristic-first verdict — returns null when the result is
+// ambiguous and a vision call is genuinely needed.
+// Goal: skip AI for the obvious ~90% of element interactions.
+// ============================================================
+export function tryConfidentAssessment(
+  testAction: AgentTestAction,
+  context: {
+    urlChanged: boolean;
+    urlBefore: string;
+    urlAfter: string;
+    consoleErrors: string[];
+    networkErrors: string[];
+    responseTimeMs: number;
+    pageTitle: string;
+  }
+): { status: string; assessment: string } | null {
+  const realErrors = filterBenignErrors(context.consoleErrors);
+  const realNetErrors = context.networkErrors || [];
+
+  if (realErrors.length > 0 && context.responseTimeMs > 3000) {
+    return {
+      status: "failed",
+      assessment: `Console errors after interaction: ${realErrors.slice(0, 2).join("; ")}`,
+    };
+  }
+  if (realNetErrors.length > 0) {
+    return {
+      status: "failed",
+      assessment: `Network errors: ${realNetErrors.slice(0, 2).join("; ")}`,
+    };
+  }
+
+  if (context.responseTimeMs > 5000) {
+    return {
+      status: "warning",
+      assessment: `Element responded but was slow (${context.responseTimeMs}ms)`,
+    };
+  }
+
+  if (testAction.action === "click" && context.urlChanged) {
+    try {
+      const before = new URL(context.urlBefore);
+      const after = new URL(context.urlAfter);
+      const sameDomain =
+        after.hostname === before.hostname ||
+        after.hostname.endsWith("." + before.hostname);
+      if (sameDomain && context.responseTimeMs < 3000) {
+        return {
+          status: "passed",
+          assessment: `Navigation successful (${before.pathname} → ${after.pathname}) in ${context.responseTimeMs}ms`,
+        };
+      }
+    } catch {}
+  }
+
+  if (testAction.action === "type" && context.responseTimeMs < 3000 && realErrors.length === 0) {
+    return {
+      status: "passed",
+      assessment: `Text input accepted in ${context.responseTimeMs}ms`,
+    };
+  }
+
+  if (testAction.action === "hover" && context.responseTimeMs < 3000 && realErrors.length === 0) {
+    return {
+      status: "passed",
+      assessment: `Hover completed in ${context.responseTimeMs}ms`,
+    };
+  }
+
+  // Ambiguous — let vision decide.
+  return null;
+}
+
+function filterBenignErrors(errors: string[]): string[] {
+  return errors.filter((e) => {
+    const lower = e.toLowerCase();
+    return !(
+      lower.includes("cors") ||
+      lower.includes("mixed content") ||
+      lower.includes("favicon") ||
+      lower.includes("deprecated") ||
+      lower.includes("third-party") ||
+      lower.includes("cookie") ||
+      lower.includes("analytics") ||
+      lower.includes("gtm") ||
+      lower.includes("google") ||
+      lower.includes("facebook") ||
+      lower.includes("tracking") ||
+      lower.includes("csp") ||
+      lower.includes("content security policy") ||
+      lower.includes("net::err") ||
+      lower.includes("failed to load resource") ||
+      lower.includes("manifest")
+    );
+  });
+}
+
 function fallbackAssessment(
   testAction: AgentTestAction,
   context: {
@@ -695,7 +753,7 @@ function fallbackAssessment(
   };
 }
 
-function templateSummary(
+export function templateSummary(
   pageUnderstanding: AgentTestPlan["pageUnderstanding"],
   results: AgentStepResult[],
   totalDuration: number
