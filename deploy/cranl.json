@@ -1,0 +1,9 @@
+{
+  "applicationId": "9cb92bbc-a3ec-41f0-ad9b-5f5d4478c892",
+  "projectId": "21d3c1f4-ffb0-476c-a488-63b80fe48d88",
+  "region": "saudi-riyadh",
+  "url": "https://rasd-eylx2l.cranl.net",
+  "repository": "KhalidAlmutairi0/rassd-govwatch",
+  "branch": "deploy/cranl-saudi-20260914",
+  "port": 3000
+}
