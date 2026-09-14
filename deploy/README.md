@@ -20,7 +20,10 @@ deployment source. Without an AI key, Rasd uses its built-in browser checks.
 SQLite and evidence files live in `/data`. Database migrations run on startup.
 A durable mount at `/data` is required for retaining history across container
 replacement; a Dockerfile `VOLUME` declaration alone does not guarantee this
-on a managed platform. Confirm retention before relying on deployed history.
+on a managed platform. **Verified on 2026-09-14:** a Cranl reload replaced the
+container and recreated the database; the saved report and screenshot returned
+404 afterward. History is currently temporary. Configure a named persistent
+mount through Cranl before relying on retained monitoring history.
 
 ## Local container check
 
