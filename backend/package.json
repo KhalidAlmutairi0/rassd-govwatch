@@ -1,0 +1,40 @@
+{
+  "name": "@rasd/backend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "npm run db:generate && tsx watch src/main.ts",
+    "dev:api": "npm run db:generate && tsx watch src/server.ts",
+    "dev:worker": "npm run db:generate && tsx watch src/worker/scheduler.ts",
+    "build": "npm run db:generate && tsc",
+    "start": "node dist/main.js",
+    "start:api": "node dist/server.js",
+    "worker": "node dist/worker/scheduler.js",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "node scripts/database.mjs generate",
+    "db:migrate": "node scripts/database.mjs migrate",
+    "seed": "node dist/seed.js",
+    "browser:install": "playwright install chromium",
+    "setup": "npm run db:generate && npm run db:migrate && npm run browser:install",
+    "backup": "node scripts/backup.mjs",
+    "backup:verify": "node scripts/verify-backup.mjs",
+    "backup:restore": "node scripts/restore-backup.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.24.3",
+    "@prisma/client": "^5.14.0",
+    "cheerio": "^1.0.0",
+    "openai": "^4.50.0",
+    "playwright": "^1.44.0",
+    "ws": "^8.17.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/ws": "^8.5.0",
+    "prisma": "^5.14.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  },
+  "engines": { "node": ">=22.16.0" }
+}

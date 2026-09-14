@@ -1,0 +1,35 @@
+[Unit]
+Description=Rasd API and browser execution worker
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=rasd
+Group=rasd
+WorkingDirectory=/opt/rasd/backend
+EnvironmentFile=/etc/rasd/backend.env
+Environment=NODE_ENV=production
+Environment=RASD_SYSTEMD_MANAGED=true
+ExecStart=/usr/local/bin/node dist/main.js
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+KillMode=control-group
+OOMPolicy=kill
+MemoryHigh=2G
+MemoryMax=3G
+CPUQuota=200%
+TasksMax=512
+LimitNOFILE=8192
+UMask=0077
+StateDirectory=rasd
+CacheDirectory=rasd
+ProtectSystem=strict
+PrivateTmp=true
+ReadWritePaths=/var/lib/rasd /var/cache/rasd
+
+[Install]
+WantedBy=multi-user.target

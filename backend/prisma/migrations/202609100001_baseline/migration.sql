@@ -1,0 +1,110 @@
+CREATE TABLE "Site" (
+  "id" TEXT NOT NULL PRIMARY KEY,
+  "name" TEXT NOT NULL,
+  "nameAr" TEXT,
+  "baseUrl" TEXT NOT NULL,
+  "description" TEXT,
+  "schedule" INTEGER NOT NULL DEFAULT 10,
+  "isPreset" BOOLEAN NOT NULL DEFAULT false,
+  "isActive" BOOLEAN NOT NULL DEFAULT true,
+  "status" TEXT NOT NULL DEFAULT 'unknown',
+  "lastRunAt" DATETIME,
+  "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" DATETIME NOT NULL
+);
+CREATE TABLE "Journey" (
+  "id" TEXT NOT NULL PRIMARY KEY,
+  "siteId" TEXT NOT NULL,
+  "name" TEXT NOT NULL,
+  "type" TEXT NOT NULL DEFAULT 'smoke',
+  "stepsJson" TEXT NOT NULL,
+  "isDefault" BOOLEAN NOT NULL DEFAULT false,
+  "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" DATETIME NOT NULL,
+  FOREIGN KEY ("siteId") REFERENCES "Site" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE TABLE "Run" (
+  "id" TEXT NOT NULL PRIMARY KEY,
+  "siteId" TEXT NOT NULL,
+  "journeyId" TEXT NOT NULL,
+  "status" TEXT NOT NULL DEFAULT 'queued',
+  "durationMs" INTEGER,
+  "totalSteps" INTEGER NOT NULL DEFAULT 0,
+  "passedSteps" INTEGER NOT NULL DEFAULT 0,
+  "failedSteps" INTEGER NOT NULL DEFAULT 0,
+  "summaryJson" TEXT,
+  "errorJson" TEXT,
+  "triggeredBy" TEXT NOT NULL DEFAULT 'scheduler',
+  "aiPageUnderstanding" TEXT,
+  "aiTestPlan" TEXT,
+  "aiSummary" TEXT,
+  "startedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "finishedAt" DATETIME,
+  FOREIGN KEY ("siteId") REFERENCES "Site" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+  FOREIGN KEY ("journeyId") REFERENCES "Journey" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE TABLE "RunStep" (
+  "id" TEXT NOT NULL PRIMARY KEY,
+  "runId" TEXT NOT NULL,
+  "stepIndex" INTEGER NOT NULL,
+  "action" TEXT NOT NULL,
+  "description" TEXT NOT NULL,
+  "selector" TEXT,
+  "value" TEXT,
+  "url" TEXT,
+  "status" TEXT NOT NULL DEFAULT 'pending',
+  "durationMs" INTEGER,
+  "screenshotPath" TEXT,
+  "error" TEXT,
+  "metadata" TEXT,
+  FOREIGN KEY ("runId") REFERENCES "Run" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE TABLE "Artifact" (
+  "id" TEXT NOT NULL PRIMARY KEY,
+  "runId" TEXT NOT NULL,
+  "type" TEXT NOT NULL,
+  "path" TEXT NOT NULL,
+  "sizeBytes" INTEGER,
+  "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY ("runId") REFERENCES "Run" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE TABLE "ElementTestResult" (
+  "id" TEXT NOT NULL PRIMARY KEY,
+  "runId" TEXT NOT NULL,
+  "elementType" TEXT NOT NULL,
+  "elementText" TEXT,
+  "elementTextAr" TEXT,
+  "elementSelector" TEXT NOT NULL,
+  "parentSection" TEXT,
+  "action" TEXT NOT NULL,
+  "status" TEXT NOT NULL DEFAULT 'pending',
+  "responseTimeMs" INTEGER,
+  "urlBefore" TEXT,
+  "urlAfter" TEXT,
+  "urlChanged" BOOLEAN NOT NULL DEFAULT false,
+  "screenshotBefore" TEXT,
+  "screenshotAfter" TEXT,
+  "consoleErrors" TEXT,
+  "networkErrors" TEXT,
+  "domChanges" TEXT,
+  "error" TEXT,
+  "cursorX" INTEGER,
+  "cursorY" INTEGER,
+  "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY ("runId") REFERENCES "Run" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE TABLE "Incident" (
+  "id" TEXT NOT NULL PRIMARY KEY,
+  "siteId" TEXT NOT NULL,
+  "journeyId" TEXT,
+  "title" TEXT NOT NULL,
+  "description" TEXT,
+  "status" TEXT NOT NULL DEFAULT 'open',
+  "severity" TEXT NOT NULL DEFAULT 'medium',
+  "occurrences" INTEGER NOT NULL DEFAULT 1,
+  "firstSeenAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "lastSeenAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "resolvedAt" DATETIME,
+  FOREIGN KEY ("siteId") REFERENCES "Site" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+  FOREIGN KEY ("journeyId") REFERENCES "Journey" ("id") ON DELETE SET NULL ON UPDATE CASCADE
+);

@@ -1,57 +1,35 @@
-FROM node:20-slim
-
-# Install system dependencies required by Chromium
-RUN apt-get update && apt-get install -y \
-    fonts-noto \
-    fonts-noto-cjk \
-    ca-certificates \
-    openssl \
-    libglib2.0-0 \
-    libnss3 \
-    libnspr4 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libdrm2 \
-    libdbus-1-3 \
-    libxcb1 \
-    libxkbcommon0 \
-    libx11-6 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxext6 \
-    libxfixes3 \
-    libxrandr2 \
-    libgbm1 \
-    libpango-1.0-0 \
-    libcairo2 \
-    --no-install-recommends \
-    && (apt-get install -y libasound2 2>/dev/null || apt-get install -y libasound2t64 2>/dev/null || true) \
-    && rm -rf /var/lib/apt/lists/*
-
+FROM node:22-bookworm-slim AS build
 WORKDIR /app
-
-# Install dependencies
-COPY package*.json ./
-COPY prisma ./prisma/
+COPY package.json package-lock.json ./
+COPY frontend/package.json frontend/package.json
+COPY backend/package.json backend/package.json
 RUN npm ci
-RUN npx prisma generate
+COPY backend backend
+COPY frontend frontend
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
+ENV NEXT_TELEMETRY_DISABLED=1 \
+    NEXT_PUBLIC_API_URL=same-origin \
+    NEXT_PUBLIC_WS_URL=same-origin
+RUN npm run build
 
-# Install Playwright's own Chromium (guaranteed compatible)
-RUN npx playwright install chromium
-
-# Copy source
-COPY . .
-
-# Build Next.js
-RUN DATABASE_URL="file:./build.db" npm run build && rm -f build.db
-
-# Create dirs for artifacts and persistent data
-RUN mkdir -p artifacts /data
-
+FROM node:22-bookworm-slim AS runtime
+WORKDIR /app
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    DATA_DIR=/data \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    API_HOST=127.0.0.1 \
+    API_PORT=4000 \
+    WORKER_HOST=127.0.0.1 \
+    WORKER_PORT=4001
+RUN apt-get update && apt-get install -y --no-install-recommends nginx supervisor ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=build /app /app
+RUN npx playwright install --with-deps chromium && rm -rf /var/lib/apt/lists/*
+COPY deploy/nginx.conf /etc/nginx/nginx.conf
+COPY deploy/supervisord.conf /etc/supervisor/conf.d/rasd.conf
+COPY deploy/start.sh /app/deploy/start.sh
+RUN chmod +x /app/deploy/start.sh && mkdir -p /data
+VOLUME ["/data"]
 EXPOSE 3000
-
-COPY start.sh ./start.sh
-RUN chmod +x start.sh
-
-CMD ["./start.sh"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s CMD node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+CMD ["/app/deploy/start.sh"]
